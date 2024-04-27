@@ -1,5 +1,7 @@
 import torch
 
+from .utils import check_time, convert_time, parse_blocks
+
 
 class ApplyMSWMSAAttention:
     RETURN_TYPES = ("MODEL",)
@@ -73,11 +75,6 @@ class ApplyMSWMSAAttention:
             x = torch.roll(x, shifts=(shift_size[0], shift_size[1]), dims=(1, 2))
         return x.view(batch, height * width, channels)
 
-    @classmethod
-    def parse_blocks(cls, name, s):
-        vals = (rawval.strip() for rawval in s.split(","))
-        return {(name, int(val.strip())) for val in vals if val}
-
     def patch(
         self,
         model,
@@ -88,9 +85,9 @@ class ApplyMSWMSAAttention:
         start_time,
         end_time,
     ):
-        use_blocks = self.parse_blocks("input", input_blocks)
-        use_blocks |= self.parse_blocks("middle", middle_blocks)
-        use_blocks |= self.parse_blocks("output", output_blocks)
+        use_blocks = parse_blocks("input", input_blocks)
+        use_blocks |= parse_blocks("middle", middle_blocks)
+        use_blocks |= parse_blocks("output", output_blocks)
 
         window_args = None
         last_shift = None
@@ -98,39 +95,16 @@ class ApplyMSWMSAAttention:
         model = model.clone()
         ms = model.get_model_object("model_sampling")
 
-        match time_mode:
-            case "sigma":
-
-                def check_time(sigma):
-                    return sigma <= start_time and sigma >= end_time
-            case "percent":
-                if start_time > 1.0 or start_time < 0.0:
-                    raise ValueError(
-                        "invalid value for start percent",
-                    )
-                if end_time > 1.0 or end_time < 0.0:
-                    raise ValueError(
-                        "invalid value for end percent",
-                    )
-
-                start_sigma = ms.percent_to_sigma(start_time)
-                end_sigma = ms.percent_to_sigma(end_time)
-
-                def check_time(sigma):
-                    return sigma <= start_sigma and sigma >= end_sigma
-            case "timestep":
-
-                def check_time(sigma):
-                    timestep = ms.timestep(sigma)
-                    return timestep <= start_time and timestep >= end_time
-            case _:
-                raise ValueError("invalid time mode")
+        start_sigma, end_sigma = convert_time(ms, time_mode, start_time, end_time)
 
         def attn1_patch(n, context_attn1, value_attn1, extra_options):
             nonlocal window_args, last_shift
             window_args = None
-            block = extra_options["block"]
-            if block not in use_blocks or not check_time(extra_options["sigmas"].max()):
+            if extra_options.get("block") not in use_blocks or not check_time(
+                extra_options.get("sigmas"),
+                start_sigma,
+                end_sigma,
+            ):
                 return n, context_attn1, value_attn1
 
             # MSW-MSA

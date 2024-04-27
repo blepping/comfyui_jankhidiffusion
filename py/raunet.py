@@ -5,11 +5,14 @@ from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ops import disable_weight_init
 from comfy.utils import bislerp
 
+from .utils import check_time, convert_time, parse_blocks
+
 nn = torch.nn
 F = nn.functional
 
 
 class HDConfigClass:
+    enabled = False
     start_sigma = None
     end_sigma = None
     use_blocks = None
@@ -17,18 +20,11 @@ class HDConfigClass:
     upscale_mode = "bislerp"
 
     def check(self, topts):
-        if topts is None:
+        if not self.enabled or not isinstance(topts, dict):
             return False
-        sigma = topts.get("sigmas")
-        if sigma is None:
+        if topts.get("block") not in self.use_blocks:
             return False
-        block = topts.get("block")
-        sigma = sigma.max().item()
-        if self.start_sigma is None or sigma > self.start_sigma:
-            return False
-        if self.end_sigma is None or sigma <= self.end_sigma:
-            return False
-        return self.use_blocks and block in self.use_blocks
+        return check_time(topts.get("sigmas"), self.start_sigma, self.end_sigma)
 
 
 HDCONFIG = HDConfigClass()
@@ -50,7 +46,7 @@ def try_patch_freeu_advanced():
         return
 
     def fwd_ts_embed(*args: list, **kwargs: dict):
-        if HDCONFIG.start_sigma is None:
+        if not HDCONFIG.enabled:
             return ORIG_FORWARD_TIMESTEP_EMBED(*args, **kwargs)
         return hd_forward_timestep_embed(*args, **kwargs)
 
@@ -185,33 +181,6 @@ class ApplyRAUNet:
             },
         }
 
-    @staticmethod
-    def parse_blocks(name, s) -> set:
-        vals = (rawval.strip() for rawval in s.split(","))
-        return {(name, int(val.strip())) for val in vals if val}
-
-    @staticmethod
-    def convert_time(ms, time_mode, start_time, end_time) -> tuple:
-        match time_mode:
-            case "sigma":
-                return (start_time, end_time)
-            case "percent" | "timestep":
-                if time_mode == "timestep":
-                    start_time = 1.0 - (start_time / 999.0)
-                    end_time = 1.0 - (end_time / 999.0)
-                else:
-                    if start_time > 1.0 or start_time < 0.0:
-                        raise ValueError(
-                            "invalid value for start percent",
-                        )
-                    if end_time > 1.0 or end_time < 0.0:
-                        raise ValueError(
-                            "invalid value for end percent",
-                        )
-                return (ms.percent_to_sigma(start_time), ms.percent_to_sigma(end_time))
-            case _:
-                raise ValueError("invalid time mode")
-
     def patch(
         self,
         enabled,
@@ -230,27 +199,27 @@ class ApplyRAUNet:
         ca_upscale_mode,
     ):
         global ORIG_FORWARD_TIMESTEP_EMBED  # noqa: PLW0603
-        use_blocks = self.parse_blocks("input", input_blocks)
-        use_blocks |= self.parse_blocks("output", output_blocks)
-        ca_use_blocks = self.parse_blocks("input", ca_input_blocks)
-        ca_use_blocks |= self.parse_blocks("output", ca_output_blocks)
+        use_blocks = parse_blocks("input", input_blocks)
+        use_blocks |= parse_blocks("output", output_blocks)
+        ca_use_blocks = parse_blocks("input", ca_input_blocks)
+        ca_use_blocks |= parse_blocks("output", ca_output_blocks)
 
         model = model.clone()
         if not enabled:
-            HDCONFIG.start_sigma = HDCONFIG.end_sigma = None
+            HDCONFIG.enabled = False
             if ORIG_FORWARD_TIMESTEP_EMBED is not None:
                 openaimodel.forward_timestep_embed = ORIG_FORWARD_TIMESTEP_EMBED
             return (model,)
 
         ms = model.get_model_object("model_sampling")
 
-        HDCONFIG.start_sigma, HDCONFIG.end_sigma = self.convert_time(
+        HDCONFIG.start_sigma, HDCONFIG.end_sigma = convert_time(
             ms,
             time_mode,
             start_time,
             end_time,
         )
-        ca_start_sigma, ca_end_sigma = self.convert_time(
+        ca_start_sigma, ca_end_sigma = convert_time(
             ms,
             time_mode,
             ca_start_time,
@@ -258,24 +227,19 @@ class ApplyRAUNet:
         )
 
         def input_block_patch(h, extra_options):
-            sigma = extra_options["sigmas"].max().item()
-            block = extra_options["block"]
-            if (
-                block not in ca_use_blocks
-                or sigma > ca_start_sigma
-                or sigma <= ca_end_sigma
+            if extra_options.get("block") not in ca_use_blocks or not check_time(
+                extra_options.get("sigmas"),
+                ca_start_sigma,
+                ca_end_sigma,
             ):
                 return h
             return F.avg_pool2d(h, kernel_size=(2, 2))
 
         def output_block_patch(h, hsp, extra_options):
-            sigma = extra_options["sigmas"].max().item()
-            block = extra_options["block"]
-            if (
-                block not in ca_use_blocks
-                or sigma > ca_start_sigma
-                or sigma <= ca_end_sigma
-                or h.shape[2:4] == hsp.shape[2:4]
+            if extra_options.get("block") not in ca_use_blocks or not check_time(
+                extra_options.get("sigmas"),
+                ca_start_sigma,
+                ca_end_sigma,
             ):
                 return h, hsp
             if ca_upscale_mode == "bislerp":
@@ -291,6 +255,7 @@ class ApplyRAUNet:
         HDCONFIG.use_blocks = use_blocks
         HDCONFIG.two_stage = two_stage_upscale
         HDCONFIG.upscale_mode = upscale_mode
+        HDCONFIG.enabled = True
         if openaimodel.forward_timestep_embed is not hd_forward_timestep_embed:
             try_patch_freeu_advanced()
             ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
