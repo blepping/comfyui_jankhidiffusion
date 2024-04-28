@@ -3,9 +3,8 @@ import sys
 import torch
 from comfy.ldm.modules.diffusionmodules import openaimodel
 from comfy.ops import disable_weight_init
-from comfy.utils import bislerp
 
-from .utils import check_time, convert_time, parse_blocks
+from .utils import *
 
 nn = torch.nn
 F = nn.functional
@@ -91,14 +90,7 @@ class HDUpsample(OrigUpsample):
             shape = (x.shape[2] * 2, x.shape[3] * 2)
         if HDCONFIG.two_stage_upscale:
             x = F.interpolate(x, size=shape, mode="nearest")
-        if HDCONFIG.upscale_mode == "bislerp":
-            x = bislerp(x, shape[1] * 2, shape[0] * 2)
-        else:
-            x = F.interpolate(
-                x,
-                size=(shape[0] * 2, shape[1] * 2),
-                mode=HDCONFIG.upscale_mode,
-            )
+        x = scale_samples(x, shape[1] * 2, shape[0] * 2, mode=HDCONFIG.upscale_mode)
         return self.conv(x)
 
 
@@ -167,16 +159,12 @@ class ApplyRAUNet:
                 "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "end_time": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 999.0}),
                 "two_stage_upscale": ("BOOLEAN", {"default": True}),
-                "upscale_mode": (
-                    ("bicubic", "bislerp", "bilinear", "nearest-exact", "area"),
-                ),
+                "upscale_mode": (UPSCALE_METHODS,),
                 "ca_start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "ca_end_time": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 999.0}),
                 "ca_input_blocks": ("STRING", {"default": "4"}),
                 "ca_output_blocks": ("STRING", {"default": "8"}),
-                "ca_upscale_mode": (
-                    ("bicubic", "bislerp", "bilinear", "nearest-exact", "area"),
-                ),
+                "ca_upscale_mode": (UPSCALE_METHODS,),
                 "model": ("MODEL",),
             },
         }
@@ -242,11 +230,10 @@ class ApplyRAUNet:
                 ca_end_sigma,
             ):
                 return h, hsp
-            if ca_upscale_mode == "bislerp":
-                return bislerp(h, hsp.shape[3], hsp.shape[2]), hsp
-            return F.interpolate(
+            return scale_samples(
                 h,
-                size=(hsp.shape[2], hsp.shape[3]),
+                hsp.shape[3],
+                hsp.shape[2],
                 mode=ca_upscale_mode,
             ), hsp
 

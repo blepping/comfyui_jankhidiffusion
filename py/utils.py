@@ -1,3 +1,11 @@
+import importlib
+
+import torch.nn.functional as torchf
+from comfy.utils import bislerp
+
+UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "area")
+
+
 def parse_blocks(name, s) -> set:
     vals = (rawval.strip() for rawval in s.split(","))
     return {(name, int(val.strip())) for val in vals if val}
@@ -30,3 +38,31 @@ def check_time(sigma, start_sigma, end_sigma):
         return False
     sigma = sigma.detach().cpu().max().item()
     return sigma <= start_sigma and sigma >= end_sigma
+
+
+try:
+    bleh_latentutils = importlib.import_module(
+        "custom_nodes.ComfyUI-bleh.py.latent_utils",
+    )
+    scale_samples = bleh_latentutils.scale_samples
+    UPSCALE_METHODS = bleh_latentutils.UPSCALE_METHODS
+except ImportError:
+
+    def scale_samples(
+        samples,
+        width,
+        height,
+        mode="bicubic",
+    ):
+        if mode == "bislerp":
+            return bislerp(samples, width, height)
+        return torchf.interpolate(samples, size=(height, width), mode=mode)
+
+
+__all__ = (
+    "UPSCALE_METHODS",
+    "parse_blocks",
+    "convert_time",
+    "check_time",
+    "scale_samples",
+)

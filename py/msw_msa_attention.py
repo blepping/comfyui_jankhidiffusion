@@ -1,6 +1,6 @@
 import torch
 
-from .utils import check_time, convert_time, parse_blocks
+from .utils import *
 
 
 class ApplyMSWMSAAttention:

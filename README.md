@@ -132,7 +132,8 @@ The corresponding output block should be something like `num_input_blocks - inpu
 using input `3`, output `5`, CA input `5`, CA output `4`. The CA part doesn't seem to help much with SDXL,
 you can simply disable it by setting `ca_start_time` to `1.0`.
 
-For upscale mode, good old `bicubic` may be best. The second best alternative is probably `bislerp`.
+For upscale mode, good old `bicubic` may be best. The second best alternative is probably `bislerp`. If you have
+my [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh) nodes active there will be more upscale options.
 
 ## Credits
 
