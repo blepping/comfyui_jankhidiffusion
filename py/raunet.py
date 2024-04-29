@@ -50,15 +50,20 @@ def try_patch_freeu_advanced():
         return hd_forward_timestep_embed(*args, **kwargs)
 
     fua_nodes.forward_timestep_embed = fwd_ts_embed
-    print("** Patched FreeU_Advanced")
+    print("** jankhidiffusion: Patched FreeU_Advanced")
+
+
+class NotFound:
+    pass
 
 
 def hd_forward_timestep_embed(ts, x, emb, *args: list, **kwargs: dict):
-    transformer_options = kwargs.get("transformer_options")
-    if transformer_options is None:
-        # May have been passed positionally.
-        transformer_options = args[1] if args else {}
-    output_shape = kwargs.get("output_shape")
+    transformer_options = kwargs.get("transformer_options", NotFound)
+    output_shape = kwargs.get("output_shape", NotFound)
+    transformer_options = (
+        args[1] if transformer_options is NotFound and len(args) > 1 else {}
+    )
+    output_shape = args[2] if output_shape is NotFound and len(args) > 2 else None
     for layer in ts:
         if isinstance(layer, HDUpsample):
             x = layer.forward(
@@ -84,13 +89,14 @@ class HDUpsample(OrigUpsample):
             or not HDCONFIG.check(transformer_options)
         ):
             return super().forward(x, output_shape=output_shape)
-        if output_shape is not None:
-            shape = (output_shape[2], output_shape[3])
-        else:
-            shape = (x.shape[2] * 2, x.shape[3] * 2)
+        shape = (
+            output_shape[2:4]
+            if output_shape is not None
+            else (x.shape[2] * 4, x.shape[3] * 4)
+        )
         if HDCONFIG.two_stage_upscale:
-            x = F.interpolate(x, size=shape, mode="nearest")
-        x = scale_samples(x, shape[1] * 2, shape[0] * 2, mode=HDCONFIG.upscale_mode)
+            x = F.interpolate(x, size=(shape[0] // 2, shape[1] // 2), mode="nearest")
+        x = scale_samples(x, shape[1], shape[0], mode=HDCONFIG.upscale_mode)
         return self.conv(x)
 
 
