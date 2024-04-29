@@ -47,7 +47,9 @@ Common inputs:
 **Time mode**: You can set a range when the node is active. May be `percent` (1.0 is 100%) - however note that
 this is based on sampling percentage completed and _not_ percentage of steps completed. You may also specify
 times using `timestep`s or raw `sigma` values (I recommend using percentages normally). Start and end time
-properties should be specified using the mode you choose.
+properties should be specified using the mode you choose. *Note*: Time mode only controls the format
+you enter start/end times with, it doesn't change the behavior of the nodes at all. If you don't know what
+timesteps or sigmas are, just use `percent`.
 
 **Blocks**: A comma separated list of block numbers. Input blocks are also known as down blocks, output blocks
 are also known as up blocks. SD1.5 and SDXL at least also have one middle block. For visualizing when blocks
@@ -79,26 +81,36 @@ SD 1.5 and it seems like it may also reduce artifacts at least at high res (subj
 opinion). I made a small change compared to the reference implementation: I ensure that the shifts used
 are different each step.
 
-The default block values are for SD 1.5. From what I can see, these are possible self-attention blocks:
+The default block values are for SD 1.5.
 
 **SD 1.5**:
 
-Input: 1,2,4,5,7,8
+| Type | Attention Blocks |
+| - | - |
+| Input (down) | 1, 2, 4, 5, 7, 8 |
+| Middle | 0 |
+| Output (up) | 3, 4, 5, 6, 7, 8, 9, 10, 11 |
 
-Output: 11,10,9,8,7,6,5,4,3
+Recommended SD 1.5 settings: input `1, 2`, output `9, 10, 11`.
 
 **SDXL**
 
-Input: 4,5,7,8
+| Type | Attention Blocks |
+| - | - |
+| Input (down) | 4, 5, 7, 8 |
+| Middle | 0 |
+| Output (up) | 0, 1, 2, 3, 4, 5 |
 
-Output: 5,4,3,2,1,0
+Recommended SDXL settings: input `4, 5`, output `4, 5`.
+
+*Note*: This doesn't seem to help performance much with SDXL. Also at very extreme resolutions (over 2048) you
+may need to set MSW-MSA attention to start a bit later. Try starting at 0.2 or after other scaling effects end.
+
 
 ***
 
 Input blocks downscale and output blocks upscale so the biggest effect on performance will be applying this
 to input blocks with a low block number and output blocks with a high block number.
-
-For SDXL you can try using input `4,6`, output `5,4`.
 
 ### `ApplyRAUNet`
 
@@ -114,26 +126,48 @@ As above, the default block values are for SD 1.5.
 CA blocks are (maybe?) cross attention. The blocks you can target are the same as the self-attention blocks
 listed above.
 
-Non-CA blocks are upsampler and downsampler blocks. I believe these are the possible values:
+Non-CA blocks are used to target upsampler and downsampler blocks. When setting an input block, you must use
+the corresponding output block. For example, if you're using SD 1.5 and you set input 3 then you must set
+output 8. This also applies when setting CA blocks. SD 1.5 has 12 blocks on each side of the middle block, SDXL has 9.
 
 **SD 1.5**:
 
-Input (downsampling): 3,6,9
-Output (upsampling): 8,5,2
+| Input (down) Block | Output (up) Block |
+| - |  - |
+| 3 | 8 |
+| 6 | 5 |
+| 9 | 2 |
+
+Recommended SD 1.5 settings: input 3, output 8, CA input 4, CA output 8, start 0.0, end 0.45,
+CA start 0.0, CA end 0.3.
+
+Example workflow: [Image with embedded SD1.5 workflow](assets/sd15_workflow.png)
 
 **SDXL**:
 
-Input (downsampling): 3,6
-Output (upsampling): 5,2
+| Input Downsample block | Output Upsample Block |
+| - |  - |
+| 3 | 5 |
+| 6 | 2 |
 
-Remember to pair the blocks, i.e. if you're using SDXL and set input 3 you need to set output 8. If you set
-CA input 1, you need to set CA output 11. For SD 1.5 I believe there are 12 input blocks, SDXL 9 (maybe?).
-The corresponding output block should be something like `num_input_blocks - input_block`. For SDXL you can try
-using input `3`, output `5`, CA input `5`, CA output `4`. The CA part doesn't seem to help much with SDXL,
-you can simply disable it by setting `ca_start_time` to `1.0`.
+Recommended SDXL settings: In general I haven't seen amazing results with SDXL. You can try using
+input 3, output 5 and disabling CA (set the `ca_start_time` to 1.0) _or_ setting CA input 2, CA output 7
+and disabling the upsampler/downsampler patch (set `start_time` to 1.0). I don't recommend leaving both
+enabled at the same time, but feel free to experiment. SDXL seems very sensitive to these settings. Also I don't
+recommend enabling RAUNet at all unless you are generating at a resolution significantly higher than what the
+model supports.
+
+Why does setting input 2 correspond with output 7? I actually have no idea, I would have expected it to be
+6.
+
+Example workflow: [Image with embedded SDXL workflow](assets/sdxl_workflow.png)
+
+***
 
 For upscale mode, good old `bicubic` may be best. The second best alternative is probably `bislerp`. If you have
-my [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh) nodes active there will be more upscale options.
+my [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh) nodes active there will be more upscale options. Two
+step upscale does does half of the upscale with nearest-exact and the remaining half with the upscale method you
+selected. The difference seems very minor and I am not sure which setting is better.
 
 ## Credits
 
