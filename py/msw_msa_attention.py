@@ -12,7 +12,7 @@ class ApplyMSWMSAAttention:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "input_blocks": ("STRING", {"default": "0,1"}),
+                "input_blocks": ("STRING", {"default": "1,2"}),
                 "middle_blocks": ("STRING", {"default": ""}),
                 "output_blocks": ("STRING", {"default": "9,10,11"}),
                 "time_mode": (
@@ -75,6 +75,31 @@ class ApplyMSWMSAAttention:
             x = torch.roll(x, shifts=(shift_size[0], shift_size[1]), dims=(1, 2))
         return x.view(batch, height * width, channels)
 
+    @staticmethod
+    def get_window_args(n, orig_shape, shift) -> tuple:
+        _batch, features, _channels = n.shape
+        orig_height, orig_width = orig_shape[-2:]
+
+        downsample_ratio = int(
+            ((orig_height * orig_width) // features) ** 0.5,
+        )
+        height, width = (
+            orig_height // downsample_ratio,
+            orig_width // downsample_ratio,
+        )
+        window_size = (height // 2, width // 2)
+
+        match shift:
+            case 0:
+                shift_size = (0, 0)
+            case 1:
+                shift_size = (window_size[0] // 4, window_size[1] // 4)
+            case 2:
+                shift_size = (window_size[0] // 4 * 2, window_size[1] // 4 * 2)
+            case _:
+                shift_size = (window_size[0] // 4 * 3, window_size[1] // 4 * 3)
+        return (window_size, shift_size, height, width)
+
     def patch(
         self,
         model,
@@ -89,61 +114,52 @@ class ApplyMSWMSAAttention:
         use_blocks |= parse_blocks("middle", middle_blocks)
         use_blocks |= parse_blocks("output", output_blocks)
 
-        window_args = None
-        last_shift = None
+        window_args = last_block = last_shift = None
 
         model = model.clone()
         ms = model.get_model_object("model_sampling")
 
         start_sigma, end_sigma = convert_time(ms, time_mode, start_time, end_time)
 
-        def attn1_patch(n, context_attn1, value_attn1, extra_options):
-            nonlocal window_args, last_shift
+        def attn1_patch(q, k, v, extra_options):
+            nonlocal window_args, last_shift, last_block
             window_args = None
-            if extra_options.get("block") not in use_blocks or not check_time(
-                extra_options.get("sigmas"),
+            last_block = extra_options.get("block")
+            if last_block not in use_blocks or not check_time(
+                extra_options,
                 start_sigma,
                 end_sigma,
             ):
-                return n, context_attn1, value_attn1
-
+                return q, k, v
+            orig_shape = extra_options["original_shape"]
             # MSW-MSA
-            batch, features, channels = n.shape
-            orig_height, orig_width = extra_options["original_shape"][-2:]
-
-            downsample_ratio = int(
-                ((orig_height * orig_width) // features) ** 0.5,
+            shift = int(torch.rand(1, device="cpu").item() * 4)
+            if shift == last_shift:
+                shift = (shift + 1) % 4
+            last_shift = shift
+            window_args = tuple(
+                self.get_window_args(x, orig_shape, shift) if x is not None else None
+                for x in (q, k, v)
             )
-            height, width = (
-                orig_height // downsample_ratio,
-                orig_width // downsample_ratio,
+            if q is not None and q is k and q is v:
+                return (
+                    self.window_partition(
+                        q,
+                        *window_args[0],
+                    ),
+                ) * 3
+            return tuple(
+                self.window_partition(x, *window_args[idx]) if x is not None else None
+                for idx, x in enumerate((q, k, v))
             )
-            window_size = (height // 2, width // 2)
 
-            curr_shift = int(torch.rand(1, device="cpu").item() * 4)
-            if curr_shift == last_shift:
-                curr_shift = (curr_shift + 1) % 4
-            last_shift = curr_shift
-            match curr_shift:
-                case 0:
-                    shift_size = (0, 0)
-                case 1:
-                    shift_size = (window_size[0] // 4, window_size[1] // 4)
-                case 2:
-                    shift_size = (window_size[0] // 4 * 2, window_size[1] // 4 * 2)
-                case _:
-                    shift_size = (window_size[0] // 4 * 3, window_size[1] // 4 * 3)
-            window_args = (window_size, shift_size, height, width)
-            result = self.window_partition(n, *window_args)
-            return (result, None, None)
-
-        def attn1_output_patch(n, _extra_options):
+        def attn1_output_patch(n, extra_options):
             nonlocal window_args
-            if window_args is None:
+            if window_args is None or last_block != extra_options.get("block"):
+                window_args = None
                 return n
-            result = self.window_reverse(n, *window_args)
-            window_args = None
-            return result
+            args, window_args = window_args[0], None
+            return self.window_reverse(n, *args)
 
         model.set_model_attn1_patch(attn1_patch)
         model.set_model_attn1_output_patch(attn1_output_patch)

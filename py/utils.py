@@ -33,18 +33,34 @@ def convert_time(ms, time_mode, start_time, end_time) -> tuple:
             raise ValueError("invalid time mode")
 
 
-def check_time(sigma, start_sigma, end_sigma):
+def get_sigma(options, key="sigmas"):
+    if not isinstance(options, dict):
+        return None
+    sigmas = options.get(key)
+    if sigmas is None:
+        return None
+    return sigmas.detach().cpu().max().item()
+
+
+def check_time(options, start_sigma, end_sigma):
+    sigma = get_sigma(options)
     if sigma is None:
         return False
-    sigma = sigma.detach().cpu().max().item()
     return sigma <= start_sigma and sigma >= end_sigma
 
 
 try:
-    bleh_latentutils = importlib.import_module(
-        "custom_nodes.ComfyUI-bleh.py.latent_utils",
+    bleh = importlib.import_module(
+        "custom_nodes.ComfyUI-bleh",
     )
-    scale_samples = bleh_latentutils.scale_samples
+    bleh_latentutils = bleh.py.latent_utils
+    bleh_version = getattr(bleh, "BLEH_VERSION", -1)
+    if bleh_version < 0:
+
+        def scale_samples(*args: list, sigma=None, **kwargs: dict):  # noqa: ARG001
+            return bleh_latentutils.scale_samples(*args, **kwargs)
+    else:
+        scale_samples = bleh_latentutils.scale_samples
     UPSCALE_METHODS = bleh_latentutils.UPSCALE_METHODS
 except ImportError:
 
@@ -53,6 +69,7 @@ except ImportError:
         width,
         height,
         mode="bicubic",
+        sigma=None,  # noqa: ARG001
     ):
         if mode == "bislerp":
             return bislerp(samples, width, height)
@@ -60,9 +77,10 @@ except ImportError:
 
 
 __all__ = (
-    "UPSCALE_METHODS",
-    "parse_blocks",
-    "convert_time",
     "check_time",
+    "convert_time",
+    "get_sigma",
+    "parse_blocks",
     "scale_samples",
+    "UPSCALE_METHODS",
 )

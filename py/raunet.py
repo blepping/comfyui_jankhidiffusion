@@ -23,7 +23,7 @@ class HDConfigClass:
             return False
         if topts.get("block") not in self.use_blocks:
             return False
-        return check_time(topts.get("sigmas"), self.start_sigma, self.end_sigma)
+        return check_time(topts, self.start_sigma, self.end_sigma)
 
 
 HDCONFIG = HDConfigClass()
@@ -96,7 +96,13 @@ class HDUpsample(OrigUpsample):
         )
         if HDCONFIG.two_stage_upscale:
             x = F.interpolate(x, size=(shape[0] // 2, shape[1] // 2), mode="nearest")
-        x = scale_samples(x, shape[1], shape[0], mode=HDCONFIG.upscale_mode)
+        x = scale_samples(
+            x,
+            shape[1],
+            shape[0],
+            mode=HDCONFIG.upscale_mode,
+            sigma=get_sigma(transformer_options),
+        )
         return self.conv(x)
 
 
@@ -222,7 +228,7 @@ class ApplyRAUNet:
 
         def input_block_patch(h, extra_options):
             if extra_options.get("block") not in ca_use_blocks or not check_time(
-                extra_options.get("sigmas"),
+                extra_options,
                 ca_start_sigma,
                 ca_end_sigma,
             ):
@@ -231,16 +237,21 @@ class ApplyRAUNet:
 
         def output_block_patch(h, hsp, extra_options):
             if extra_options.get("block") not in ca_use_blocks or not check_time(
-                extra_options.get("sigmas"),
+                extra_options,
                 ca_start_sigma,
                 ca_end_sigma,
             ):
                 return h, hsp
+            sigma = get_sigma(extra_options)
+            block = extra_options.get("block", ("", 0))[1]
+            if sigma is not None and (block < 3 or block > 6):
+                sigma /= 16
             return scale_samples(
                 h,
                 hsp.shape[3],
                 hsp.shape[2],
                 mode=ca_upscale_mode,
+                sigma=sigma,
             ), hsp
 
         model.set_model_input_block_patch(input_block_patch)
