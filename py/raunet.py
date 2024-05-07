@@ -170,7 +170,7 @@ class ApplyRAUNet:
                 ),
                 "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "end_time": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 999.0}),
-                "two_stage_upscale": ("BOOLEAN", {"default": True}),
+                "two_stage_upscale": ("BOOLEAN", {"default": False}),
                 "upscale_mode": (UPSCALE_METHODS,),
                 "ca_start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "ca_end_time": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 999.0}),
@@ -265,3 +265,105 @@ class ApplyRAUNet:
             ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
             openaimodel.forward_timestep_embed = hd_forward_timestep_embed
         return (model,)
+
+
+class ApplyRAUNetSimple:
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "go"
+    CATEGORY = "model_patches"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "enabled": ("BOOLEAN", {"default": True}),
+                "model_type": (("SD15", "SDXL"),),
+                "res_mode": (
+                    (
+                        "high (1536-2048)",
+                        "low (1024 or lower)",
+                        "ultra (over 2048)",
+                    ),
+                ),
+                "upscale_mode": (
+                    (
+                        "default",
+                        *UPSCALE_METHODS,
+                    ),
+                ),
+                "ca_upscale_mode": (
+                    (
+                        "default",
+                        *UPSCALE_METHODS,
+                    ),
+                ),
+                "model": ("MODEL",),
+            },
+        }
+
+    def go(self, enabled, model_type, res_mode, upscale_mode, ca_upscale_mode, model):
+        if upscale_mode == "default":
+            upscale_mode = "bicubic"
+        if ca_upscale_mode == "default":
+            ca_upscale_mode = "bicubic"
+        res = res_mode.split(" ", 1)[0]
+        match model_type:
+            case "SD15":
+                blocks = ("3", "8")
+                ca_blocks = ("1", "11")
+                time_range = (0.0, 0.6)
+                match res:
+                    case "low":
+                        time_range = (0.0, 0.4)
+                        ca_time_range = (1.0, 0.0)
+                        ca_blocks = ("", "")
+                    case "high":
+                        time_range = (0.0, 0.5)
+                        ca_time_range = (0.0, 0.35)
+                    case "ultra":
+                        time_range = (0.0, 0.6)
+                        ca_time_range = (0.0, 0.45)
+                    case _:
+                        raise ValueError("Unknown res_mode")
+            case "SDXL":
+                blocks = ("3", "5")
+                ca_blocks = ("4", "5")
+                match res:
+                    case "low":
+                        time_range = (1.0, 0.0)
+                        ca_time_range = (1.0, 0.0)
+                        ca_blocks = ("", "")
+                        enabled = False
+                    case "high":
+                        time_range = (0.0, 0.5)
+                        ca_time_range = (1.0, 0.0)
+                    case "ultra":
+                        time_range = (0.0, 0.6)
+                        ca_time_range = (0.0, 0.45)
+                    case _:
+                        raise ValueError("Unknown res_mode")
+            case _:
+                raise ValueError("Unknown model type")
+        if not enabled:
+            print("** ApplyRAUNetSimple: Disabled")
+            return (model.clone(),)
+        prettyblocks = " / ".join(b if b else "none" for b in blocks)
+        prettycablocks = " / ".join(b if b else "none" for b in ca_blocks)
+        print(
+            f"** ApplyRAUNetSimple: Using preset {model_type} {res}: upscale {upscale_mode}, in/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}  |  CA upscale {ca_upscale_mode},  CA in/out blocks [{prettycablocks}], CA start/end percent {ca_time_range[0]:.2}/{ca_time_range[1]:.2}",
+        )
+        return ApplyRAUNet().patch(
+            True,  # noqa: FBT003
+            model,
+            *blocks,
+            "percent",
+            *time_range,
+            False,  # noqa: FBT003
+            upscale_mode,
+            *ca_time_range,
+            *ca_blocks,
+            ca_upscale_mode,
+        )
+
+
+__all__ = ("ApplyRAUNet", "ApplyRAUNetSimple")

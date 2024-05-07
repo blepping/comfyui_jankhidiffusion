@@ -1,15 +1,19 @@
 # ComfyUI jank HiDiffusion
 
-Janky experimental attempt at implementing [HiDiffusion](https://github.com/megvii-research/HiDiffusion) for ComfyUI.
+Janky experimental implementation of [HiDiffusion](https://github.com/megvii-research/HiDiffusion) for
+[ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
 ## Description
 
 Read the link above for an official description. The following is just my understanding and may or may not be
 correct:
 
-As far as I understand it, the RAU-Net part is essentially Kohya Deep Shrink (AKA `PatchModelAddDownscale`) with a
-different name. The main difference for that part is the downscale methods - it uses convolution with stride/dilation
-and pool averaging to downscale while Deep Shrink usually uses bicubic downscaling.
+As far as I understand it, the RAU-Net part is essentially Kohya Deep Shrink (AKA `PatchModelAddDownscale`):
+the concept is to scale down the image at the start of generation to let the model set up major details like
+how many legs a character has and then allow the model to refine and add detail once the scaling effect ends.
+The main difference for that part is the downscale methods - it uses convolution with stride/dilation
+and pool averaging to downscale while Deep Shrink usually uses bicubic downscaling. Where the scaling occurs
+also may be important — it does seem to work noticeably better than Deep Shrink, at least for SD 1.5.
 
 Not sure how to describe MSW-MSA attention. It seems like a big performance boost for SD 1.5 at high res and also
 appears to increase quality. Note that it does not enable high res generation by itself.
@@ -20,7 +24,11 @@ I'm not an expert on diffusion stuff and I'm not sure I fully understood the HiD
 may or may not work correctly. If you experience issues, please don't blame HiDiffusion unless you can also reproduce
 it with their implementation.
 
-**Important**: The node default values are for SD 1.5, they won't work well for other models (like SDXL). This
+I mainly use SD 1.5 models: generally these nodes should work well with SD 1.5. I've found SDXL in general doesn't
+tolerate these Deep Shrink type effects as well as SD 1.5 and it is also less tested. If using SDXL your mileage
+may vary.
+
+**Important**: The advanced node default values are for SD 1.5, they won't work well for other models (like SDXL). This
 stuff probably doesn't work at all for more exotic models like Cascade.
 
 * Not all aspect ratios work with the MSW-MSA attention node. It may be the same with the original implementation? Try to
@@ -42,7 +50,45 @@ stuff probably doesn't work at all for more exotic models like Cascade.
   loaded can break stuff even if you're not actually using them!
 * The list of caveats is too long, and it's probably not even complete. Yikes!
 
-## Nodes
+## Simple Nodes
+
+First: I strongly recommend at least skimming the **Use case** and *Compatibility note* sections of the
+advanced nodes so you know when to use them and potential problems to avoid. That information won't be repeated here.
+Also, I still haven't found the best  combination of settings so it is likely the preset parameters for these nodes
+will change in the future.
+
+When the nodes activate, they will output some information to your log like this:
+
+```plaintext
+** ApplyRAUNetSimple: Using preset SD15 high:
+  upscale bicubic,
+  in/out blocks [3 / 8],
+  start/end percent 0.0/0.5  |
+  CA upscale bicubic,
+  CA in/out blocks [1 / 11],
+  CA start/end percent 0.0/0.35
+
+** ApplyMSWMSAAttentionSimple: Using preset SD15:
+  in/mid/out blocks [1,2 /  / 11,10,9],
+  start/end percent 0.2/1.0
+```
+
+(Example split into multiple lines for readability.)
+
+If you want reproducible generations, take note of those settings: you can enter them into the advanced nodes.
+
+### `ApplyMSWMSAAttentionSimple`
+
+Simplified version of the MSW-MSA attention node. Use the `SD15` setting for SD 2.1 as well.
+
+### `ApplyRAUNetSimple`
+
+Simplified version of the `ApplyRAUNet` node. All the same caveats apply. Use the `SD15` for SD 2.1 as well.
+
+*Note*: This node just chooses a preset, so it's not necessarily important for your resolution to match
+the `res_mode` setting.
+
+## Advanced Nodes
 
 Common inputs:
 
@@ -73,7 +119,6 @@ input 2    output 0
 
 This is important because if you downscale `input 0`, you'd want to reverse the operation in the corresponding
 block which would _not_ be `output 0` (it would be `output 2`).
-
 
 ### `ApplyMSWMSAAttention`
 
@@ -181,10 +226,19 @@ Example workflow: [Image with embedded SDXL workflow](assets/sdxl_workflow.png)
 
 ***
 
-For upscale mode, good old `bicubic` may be best. The second best alternative is probably `bislerp`. If you have
-my [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh) nodes active there will be more upscale options. Two
+For upscale mode, good old `bicubic` may be best. The second best alternative is probably `bislerp`. Two
 step upscale does does half of the upscale with nearest-exact and the remaining half with the upscale method you
 selected. The difference seems very minor and I am not sure which setting is better.
+
+If you have my [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh) nodes active, there will be more
+upscale options. The `random` upscale method seems to work pretty well, possibly also `random+renoise1` (
+  adds a small amount of gaussian noise after upscaling
+).
+
+This node works well with [restart sampling](https://github.com/ssitu/ComfyUI_restart_sampling) — you may need
+to manually adjust the restart segments. Generally you don't want to restart back into the scaling effect,
+rather right after it ends to give the model a chance to clean up artifacts. Using the `a1111` preset will
+probably work best if you don't want to manually set segments.
 
 *Compatibility note*: Should be compatibile with the same effects as MSW-MSA attention. Likely won't work with
 other scaling effects that target the same blocks (i.e. Deep Shrink). By itself, I think it should be fine with

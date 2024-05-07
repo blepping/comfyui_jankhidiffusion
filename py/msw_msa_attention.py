@@ -141,17 +141,23 @@ class ApplyMSWMSAAttention:
                 self.get_window_args(x, orig_shape, shift) if x is not None else None
                 for x in (q, k, v)
             )
-            if q is not None and q is k and q is v:
-                return (
-                    self.window_partition(
-                        q,
-                        *window_args[0],
-                    ),
-                ) * 3
-            return tuple(
-                self.window_partition(x, *window_args[idx]) if x is not None else None
-                for idx, x in enumerate((q, k, v))
-            )
+            try:
+                if q is not None and q is k and q is v:
+                    return (
+                        self.window_partition(
+                            q,
+                            *window_args[0],
+                        ),
+                    ) * 3
+                return tuple(
+                    self.window_partition(x, *window_args[idx])
+                    if x is not None
+                    else None
+                    for idx, x in enumerate((q, k, v))
+                )
+            except RuntimeError as exc:
+                errstr = f"MSW-MSA attention error: Incompatible model patches or bad resolution. Try using resolutions that are multiples of 32 or 64. Original exception: {exc}"
+                raise RuntimeError(errstr) from exc
 
         def attn1_output_patch(n, extra_options):
             nonlocal window_args
@@ -164,3 +170,36 @@ class ApplyMSWMSAAttention:
         model.set_model_attn1_patch(attn1_patch)
         model.set_model_attn1_output_patch(attn1_output_patch)
         return (model,)
+
+
+class ApplyMSWMSAAttentionSimple:
+    RETURN_TYPES = ("MODEL",)
+    FUNCTION = "go"
+    CATEGORY = "model_patches"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model_type": (("SD15", "SDXL"),),
+                "model": ("MODEL",),
+            },
+        }
+
+    def go(self, model_type, model):
+        time_range = (0.2, 1.0)
+        match model_type:
+            case "SD15":
+                blocks = ("1,2", "", "11,10,9")
+            case "SDXL":
+                blocks = ("4,5", "", "5,4")
+            case _:
+                raise ValueError("Unknown model type")
+        prettyblocks = " / ".join(b if b else "none" for b in blocks)
+        print(
+            f"** ApplyMSWMSAAttentionSimple: Using preset {model_type}: in/mid/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}",
+        )
+        return ApplyMSWMSAAttention().patch(model, *blocks, "percent", *time_range)
+
+
+__all__ = ("ApplyMSWMSAAttention", "ApplyMSWMSAAttentionSimple")
