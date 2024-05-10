@@ -307,43 +307,40 @@ class ApplyRAUNetSimple:
         if ca_upscale_mode == "default":
             ca_upscale_mode = "bicubic"
         res = res_mode.split(" ", 1)[0]
-        match model_type:
-            case "SD15":
-                blocks = ("3", "8")
-                ca_blocks = ("1", "11")
+        if model_type == "SD15":
+            blocks = ("3", "8")
+            ca_blocks = ("1", "11")
+            time_range = (0.0, 0.6)
+            if res == "low":
+                time_range = (0.0, 0.4)
+                ca_time_range = (1.0, 0.0)
+                ca_blocks = ("", "")
+            elif res == "high":
+                time_range = (0.0, 0.5)
+                ca_time_range = (0.0, 0.35)
+            elif res == "ultra":
                 time_range = (0.0, 0.6)
-                match res:
-                    case "low":
-                        time_range = (0.0, 0.4)
-                        ca_time_range = (1.0, 0.0)
-                        ca_blocks = ("", "")
-                    case "high":
-                        time_range = (0.0, 0.5)
-                        ca_time_range = (0.0, 0.35)
-                    case "ultra":
-                        time_range = (0.0, 0.6)
-                        ca_time_range = (0.0, 0.45)
-                    case _:
-                        raise ValueError("Unknown res_mode")
-            case "SDXL":
-                blocks = ("3", "5")
-                ca_blocks = ("4", "5")
-                match res:
-                    case "low":
-                        time_range = (1.0, 0.0)
-                        ca_time_range = (1.0, 0.0)
-                        ca_blocks = ("", "")
-                        enabled = False
-                    case "high":
-                        time_range = (0.0, 0.5)
-                        ca_time_range = (1.0, 0.0)
-                    case "ultra":
-                        time_range = (0.0, 0.6)
-                        ca_time_range = (0.0, 0.45)
-                    case _:
-                        raise ValueError("Unknown res_mode")
-            case _:
-                raise ValueError("Unknown model type")
+                ca_time_range = (0.0, 0.45)
+            else:
+                raise ValueError("Unknown res_mode")
+        elif model_type == "SDXL":
+            blocks = ("3", "5")
+            ca_blocks = ("4", "5")
+            if res == "low":
+                time_range = (1.0, 0.0)
+                ca_time_range = (1.0, 0.0)
+                ca_blocks = ("", "")
+                enabled = False
+            elif res == "high":
+                time_range = (0.0, 0.5)
+                ca_time_range = (1.0, 0.0)
+            elif res == "ultra":
+                time_range = (0.0, 0.6)
+                ca_time_range = (0.0, 0.45)
+            else:
+                raise ValueError("Unknown res_mode")
+        else:
+            raise ValueError("Unknown model type")
         if not enabled:
             print("** ApplyRAUNetSimple: Disabled")
             return (model.clone(),)

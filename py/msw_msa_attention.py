@@ -89,15 +89,14 @@ class ApplyMSWMSAAttention:
         )
         window_size = (height // 2, width // 2)
 
-        match shift:
-            case 0:
-                shift_size = (0, 0)
-            case 1:
-                shift_size = (window_size[0] // 4, window_size[1] // 4)
-            case 2:
-                shift_size = (window_size[0] // 4 * 2, window_size[1] // 4 * 2)
-            case _:
-                shift_size = (window_size[0] // 4 * 3, window_size[1] // 4 * 3)
+        if shift == 0:
+            shift_size = (0, 0)
+        elif shift == 1:
+            shift_size = (window_size[0] // 4, window_size[1] // 4)
+        elif shift == 2:
+            shift_size = (window_size[0] // 4 * 2, window_size[1] // 4 * 2)
+        else:
+            shift_size = (window_size[0] // 4 * 3, window_size[1] // 4 * 3)
         return (window_size, shift_size, height, width)
 
     def patch(
@@ -188,13 +187,12 @@ class ApplyMSWMSAAttentionSimple:
 
     def go(self, model_type, model):
         time_range = (0.2, 1.0)
-        match model_type:
-            case "SD15":
-                blocks = ("1,2", "", "11,10,9")
-            case "SDXL":
-                blocks = ("4,5", "", "5,4")
-            case _:
-                raise ValueError("Unknown model type")
+        if model_type == "SD15":
+            blocks = ("1,2", "", "11,10,9")
+        elif model_type == "SDXL":
+            blocks = ("4,5", "", "5,4")
+        else:
+            raise ValueError("Unknown model type")
         prettyblocks = " / ".join(b if b else "none" for b in blocks)
         print(
             f"** ApplyMSWMSAAttentionSimple: Using preset {model_type}: in/mid/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}",
