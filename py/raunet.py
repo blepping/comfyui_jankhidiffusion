@@ -1,3 +1,4 @@
+import os
 import sys
 
 import torch
@@ -8,6 +9,11 @@ from .utils import *
 
 nn = torch.nn
 F = nn.functional
+
+NO_CONTROLNET_WORKAROUND = (
+    os.environ.get("JANKHIDIFFUSION_NO_CONTROLNET_WORKAROUND") is not None
+)
+CONTROLNET_SCALE_ARGS = {"mode": "bilinear", "align_corners": False}
 
 
 class HDConfigClass:
@@ -29,6 +35,7 @@ class HDConfigClass:
 HDCONFIG = HDConfigClass()
 
 ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
+ORIG_APPLY_CONTROL = openaimodel.apply_control
 
 PATCHED_FREEU = False
 
@@ -44,13 +51,49 @@ def try_patch_freeu_advanced():
     if not fua_nodes:
         return
 
-    def fwd_ts_embed(*args: list, **kwargs: dict):
+    def fu_forward_timestep_embed(*args: list, **kwargs: dict):
+        fun = (
+            hd_forward_timestep_embed
+            if HDCONFIG.enabled
+            else ORIG_FORWARD_TIMESTEP_EMBED
+        )
+        return fun(*args, **kwargs)
         if not HDCONFIG.enabled:
             return ORIG_FORWARD_TIMESTEP_EMBED(*args, **kwargs)
         return hd_forward_timestep_embed(*args, **kwargs)
 
-    fua_nodes.forward_timestep_embed = fwd_ts_embed
+    def fu_apply_control(*args: list, **kwargs: dict):
+        fun = hd_apply_control if HDCONFIG.enabled else ORIG_APPLY_CONTROL
+        return fun(*args, **kwargs)
+
+    fua_nodes.forward_timestep_embed = fu_forward_timestep_embed
+    if not NO_CONTROLNET_WORKAROUND:
+        fua_nodes.apply_control = fu_apply_control
     print("** jankhidiffusion: Patched FreeU_Advanced")
+
+
+def hd_apply_control(h, control, name):
+    ctrls = control.get(name) if control is not None else None
+    if ctrls is None or len(ctrls) == 0:
+        return h
+    ctrl = ctrls.pop()
+    if ctrl is None:
+        return h
+    if ctrl.shape[-2:] != h.shape[-2:]:
+        print(
+            f"* jankhidiffusion: Scaling controlnet conditioning: {ctrl.shape[-2:]} -> {h.shape[-2:]}",
+        )
+        ctrl = F.interpolate(ctrl, size=h.shape[-2:], **CONTROLNET_SCALE_ARGS)
+    h += ctrl
+    return h
+
+
+def try_patch_apply_control():
+    global ORIG_APPLY_CONTROL  # noqa: PLW0603
+    if openaimodel.apply_control is hd_apply_control or NO_CONTROLNET_WORKAROUND:
+        return
+    ORIG_APPLY_CONTROL = openaimodel.apply_control
+    openaimodel.apply_control = hd_apply_control
 
 
 class NotFound:
@@ -209,6 +252,11 @@ class ApplyRAUNet:
             HDCONFIG.enabled = False
             if ORIG_FORWARD_TIMESTEP_EMBED is not None:
                 openaimodel.forward_timestep_embed = ORIG_FORWARD_TIMESTEP_EMBED
+            if (
+                openaimodel.apply_control is not ORIG_APPLY_CONTROL
+                and not NO_CONTROLNET_WORKAROUND
+            ):
+                openaimodel.apply_control = ORIG_APPLY_CONTROL
             return (model,)
 
         ms = model.get_model_object("model_sampling")
@@ -264,6 +312,7 @@ class ApplyRAUNet:
             try_patch_freeu_advanced()
             ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
             openaimodel.forward_timestep_embed = hd_forward_timestep_embed
+        try_patch_apply_control()
         return (model,)
 
 

@@ -33,7 +33,7 @@ stuff probably doesn't work at all for more exotic models like Cascade.
 
 * Not all aspect ratios work with the MSW-MSA attention node. It may be the same with the original implementation? Try to
   use resolutions that are multiples of 64 or 128.
-* The RAUNet component does not work properly with ControlNet while the scaling effect is active.
+* The RAUNet component may not work properly with ControlNet while the scaling effect is active.
 * The MSW-MSA attention node doesn't seem to help performance with SDXL much.
 * ComfyUI doesn't have built-in support for patching the Upscale/Downscale model blocks and in fact doesn't pass
   information like the timestep to them. I had to monkeypatch some of ComfyUI's guts. This means if Comfy changes
@@ -49,6 +49,34 @@ stuff probably doesn't work at all for more exotic models like Cascade.
   are _always_ active and will delegate to the original versions when RAUNet is disabled. This means having these nodes
   loaded can break stuff even if you're not actually using them!
 * The list of caveats is too long, and it's probably not even complete. Yikes!
+
+## Use with ControlNet
+
+First: RAUNet is used to help the model construct major details like how many legs a creature has when working at
+resolutions above what it was trained on. With ControlNet guidance, you very likely don't need RAUNet and similar
+effects. Don't use it unless you actually _need_ to.
+
+If you do use RAUNet and ControlNet concurrently, I recommend adjusting the RAUNet parametrs to only apply the effect
+for a short time - the minimum necessary. For example, if you'd normaly use an end time of 0.5 and CA end time of
+0.3 then with ControlNet you may want to use an end time of 0.3 and just disable the CA effect entirely. Or apply
+it very briefly, something like CA end time 0.15.
+
+I now try to apply a workaround to scale the ControlNet conditioning when the RAUNet effect is active. This is
+_probably_ better than nothing but likely still incorrect. When it's working, you'll see messages like this
+in your log:
+
+```plaintext
+* jankhidiffusion: Scaling controlnet conditioning: torch.Size([24, 24]) -> torch.Size([12, 12])
+```
+
+If you find the workaround to cause issues, set the environment variable `JANKHIDIFFUSION_DISABLE_CONTROLNET_WORKAROUND`
+to any value.
+
+Ancestral samplers seem to work a lot better than the non-ancestral ones when using RAUNet and ControlNet simultaneously. I
+recommend using the ancestral version if possible.
+
+As for MSW-MSA attention, it seems fine with ControlNet and no special handling is required. Enable it or not according to
+your preference.
 
 ## Simple Nodes
 
@@ -242,7 +270,7 @@ probably work best if you don't want to manually set segments.
 
 *Compatibility note*: Should be compatibile with the same effects as MSW-MSA attention. Likely won't work with
 other scaling effects that target the same blocks (i.e. Deep Shrink). By itself, I think it should be fine with
-HyperTile and Deep Cache though I haven't actually tested that. Does not work properly with ControlNet at present.
+HyperTile and Deep Cache though I haven't actually tested that. May not work properly with ControlNet.
 
 ## Credits
 
