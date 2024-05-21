@@ -48,10 +48,10 @@ def check_time(options, start_sigma, end_sigma):
 
 
 try:
-    bleh = importlib.import_module(
-        "custom_nodes.ComfyUI-bleh",
-    )
-    bleh_latentutils = bleh.py.latent_utils
+    bleh = importlib.import_module("custom_nodes.ComfyUI-bleh")
+    bleh_latentutils = getattr(bleh.py, "latent_utils", None)
+    if bleh_latentutils is None:
+        raise ImportError  # noqa: TRY301
     bleh_version = getattr(bleh, "BLEH_VERSION", -1)
     if bleh_version < 0:
 
@@ -60,7 +60,7 @@ try:
     else:
         scale_samples = bleh_latentutils.scale_samples
     UPSCALE_METHODS = bleh_latentutils.UPSCALE_METHODS
-except ImportError:
+except (ImportError, NotImplementedError):
 
     def scale_samples(
         samples,
