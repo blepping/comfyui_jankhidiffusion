@@ -1,0 +1,14 @@
+[project]
+name = "comfyui_jankhidiffusion"
+description = "Janky experimental attempt at implementing [a/HiDiffusion](https://github.com/megvii-research/HiDiffusion) for ComfyUI."
+version = "1.0.0"
+license = "LICENSE"
+
+[project.urls]
+Repository = "https://github.com/blepping/comfyui_jankhidiffusion"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "comfyui_jankhidiffusion"
+Icon = ""
