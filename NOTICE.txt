@@ -1,0 +1,5 @@
+comfyui_jankhidiffusion
+
+Copyright https://gitub.com/blepping
+
+This project was based on implementation from https://github.com/megvii-research/HiDiffusion
