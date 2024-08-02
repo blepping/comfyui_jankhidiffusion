@@ -305,7 +305,7 @@ class ApplyRAUNet:
         model.set_model_input_block_patch(input_block_patch)
         model.set_model_output_block_patch(output_block_patch)
         HDCONFIG.use_blocks = use_blocks
-        HDCONFIG.two_stage = two_stage_upscale
+        HDCONFIG.two_stage_upscale = two_stage_upscale
         HDCONFIG.upscale_mode = upscale_mode
         HDCONFIG.enabled = True
         if openaimodel.forward_timestep_embed is not hd_forward_timestep_embed:
