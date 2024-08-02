@@ -213,7 +213,7 @@ class ApplyRAUNet:
                 ),
                 "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "end_time": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 999.0}),
-                "two_stage_upscale": ("BOOLEAN", {"default": False}),
+                "skip_two_stage_upscale": ("BOOLEAN", {"default": False}),
                 "upscale_mode": (UPSCALE_METHODS,),
                 "ca_start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "ca_end_time": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 999.0}),
@@ -233,7 +233,7 @@ class ApplyRAUNet:
         time_mode,
         start_time,
         end_time,
-        two_stage_upscale,
+        skip_two_stage_upscale,
         upscale_mode,
         ca_start_time,
         ca_end_time,
@@ -305,7 +305,7 @@ class ApplyRAUNet:
         model.set_model_input_block_patch(input_block_patch)
         model.set_model_output_block_patch(output_block_patch)
         HDCONFIG.use_blocks = use_blocks
-        HDCONFIG.two_stage = two_stage_upscale
+        HDCONFIG.two_stage_upscale = not skip_two_stage_upscale
         HDCONFIG.upscale_mode = upscale_mode
         HDCONFIG.enabled = True
         if openaimodel.forward_timestep_embed is not hd_forward_timestep_embed:
