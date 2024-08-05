@@ -45,9 +45,6 @@ stuff probably doesn't work at all for more exotic models like Cascade.
   was just patching a normal block, not actual cross-attention (so almost exactly like Deep Shrink). My version
   is implemented that way and does not patch cross-attention.
 * Customizable, but not very userfriendly. You get to figure out the blocks to patch!
-* Since ComfyUI doesn't allow applying a model patch for some of the RAUNet stuff, the patched Upscale/Downscale blocks
-  are _always_ active and will delegate to the original versions when RAUNet is disabled. This means having these nodes
-  loaded can break stuff even if you're not actually using them!
 * The list of caveats is too long, and it's probably not even complete. Yikes!
 
 ## Use with ControlNet
@@ -200,12 +197,7 @@ to input blocks with a low block number and output blocks with a high block numb
 normally supports. Not beneficial when generating at low resolutions (and actually likely harms quality).
 In other words, only use it when you have to.
 
-First, an important note: half of the RAUNet implementation is not a normal model patch. It globally patches
-ComfyUI. This means if you actually want to disable it after it's been enabled, you **must** execute the
-workflow once with the node toggled to disabled (at let execution reach that point). **Note**: If you don't
-do that, the RAUNet changes will be active even with the node disabled, muted or deleted entirely.
-
-Also note that you should only use one `ApplyRAUNet` node.
+You should only use one `ApplyRAUNet` node.
 
 As above, the default block values are for SD 1.5.
 

@@ -3,7 +3,7 @@ import importlib
 import torch.nn.functional as torchf
 from comfy.utils import bislerp
 
-UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "area")
+UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "nearest", "area")
 
 
 def parse_blocks(name, s) -> set:
