@@ -25,11 +25,10 @@ _ORIG_APPLY_CONTROL = openaimodel.apply_control
 
 
 class HDConfig:
-    def __init__(self, start_sigma, end_sigma, use_blocks, two_stage_upscale, upscale_mode, two_stage_upscale_mode):
+    def __init__(self, start_sigma, end_sigma, use_blocks, upscale_mode, two_stage_upscale_mode):
         self.start_sigma = start_sigma
         self.end_sigma = end_sigma
         self.use_blocks = use_blocks
-        self.two_stage_upscale = two_stage_upscale
         self.upscale_mode = upscale_mode
         self.two_stage_upscale_mode = two_stage_upscale_mode
 
@@ -61,6 +60,8 @@ def hd_forward_timestep_embed(ts, x, emb, *args: list, **kwargs: dict):
 def try_patch_forward_timestep_embed():
     if openaimodel.forward_timestep_embed is not hd_forward_timestep_embed:
         openaimodel.forward_timestep_embed = hd_forward_timestep_embed
+        logging.info("** jankhidiffusion: Patched openaimodel.forward_timestep_embed")
+
 
 def hd_apply_control(h, control, name):
     controlnet_scale_args = {"mode": "bilinear", "align_corners": False}
@@ -81,6 +82,7 @@ def hd_apply_control(h, control, name):
 def try_patch_apply_control():
     if openaimodel.apply_control is not hd_apply_control and not NO_CONTROLNET_WORKAROUND:
         openaimodel.apply_control = hd_apply_control
+        logging.info("** jankhidiffusion: Patched openaimodel.apply_control")
 
 
 # Try to be compatible with FreeU Advanced.
@@ -114,7 +116,7 @@ def forward_upsample(_self, _forward, _hdconfig: HDConfig, x, output_shape=None,
         if output_shape is not None
         else (x.shape[2] * 4, x.shape[3] * 4)
     )
-    if _hdconfig.two_stage_upscale:
+    if _hdconfig.two_stage_upscale_mode != "disabled":
         x = scale_samples(
             x,
             shape[1] // 2,
@@ -184,14 +186,13 @@ class ApplyRAUNet:
                 ),
                 "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "end_time": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 999.0}),
-                "two_stage_upscale": ("BOOLEAN", {"default": False}),
                 "upscale_mode": (UPSCALE_METHODS,),
                 "ca_start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
                 "ca_end_time": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 999.0}),
                 "ca_input_blocks": ("STRING", {"default": "4"}),
                 "ca_output_blocks": ("STRING", {"default": "8"}),
                 "ca_upscale_mode": (UPSCALE_METHODS,),
-                "two_stage_upscale_mode": (UPSCALE_METHODS, {"default": "nearest"}),
+                "two_stage_upscale_mode": (["disabled", *UPSCALE_METHODS], {"default": "disabled"}),
             },
         }
 
@@ -203,7 +204,6 @@ class ApplyRAUNet:
         time_mode,
         start_time,
         end_time,
-        two_stage_upscale,
         upscale_mode,
         ca_start_time,
         ca_end_time,
@@ -262,7 +262,7 @@ class ApplyRAUNet:
                 sigma=sigma,
             ), hsp
 
-        hdconfig = HDConfig(start_sigma, end_sigma, use_blocks, two_stage_upscale, upscale_mode, two_stage_upscale_mode)
+        hdconfig = HDConfig(start_sigma, end_sigma, use_blocks, upscale_mode, two_stage_upscale_mode)
 
         model.set_model_input_block_patch(input_block_patch)
         model.set_model_output_block_patch(output_block_patch)
@@ -320,6 +320,7 @@ class ApplyRAUNetSimple:
                 "two_stage_upscale_mode": (
                     (
                         "default",
+                        "disabled",
                         *UPSCALE_METHODS,
                     ),
                 ),
@@ -332,7 +333,7 @@ class ApplyRAUNetSimple:
         if ca_upscale_mode == "default":
             ca_upscale_mode = "bicubic"
         if two_stage_upscale_mode == "default":
-            two_stage_upscale_mode = "nearest"
+            two_stage_upscale_mode = "disabled"
         res = res_mode.split(" ", 1)[0]
         if model_type == "SD15":
             blocks = ("3", "8")
@@ -378,7 +379,6 @@ class ApplyRAUNetSimple:
             *blocks,
             "percent",
             *time_range,
-            False,  # noqa: FBT003
             upscale_mode,
             *ca_time_range,
             *ca_blocks,
