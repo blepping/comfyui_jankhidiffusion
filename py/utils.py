@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib
 
 import torch.nn.functional as torchf
@@ -6,15 +8,20 @@ from comfy.utils import bislerp
 UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "nearest", "area")
 
 
-def parse_blocks(name, s) -> set:
+def parse_blocks(name: str, s: str) -> set:
     vals = (rawval.strip() for rawval in s.split(","))
     return {(name, int(val.strip())) for val in vals if val}
 
 
-def convert_time(ms, time_mode, start_time, end_time) -> tuple:
+def convert_time(
+    ms: object,
+    time_mode: str,
+    start_time: float,
+    end_time: float,
+) -> tuple:
     if time_mode == "sigma":
         return (start_time, end_time)
-    if time_mode in ("percent", "timestep"):
+    if time_mode in {"percent", "timestep"}:
         if time_mode == "timestep":
             start_time = 1.0 - (start_time / 999.0)
             end_time = 1.0 - (end_time / 999.0)
@@ -31,17 +38,19 @@ def convert_time(ms, time_mode, start_time, end_time) -> tuple:
     raise ValueError("invalid time mode")
 
 
-def get_sigma(options, key="sigmas"):
+def get_sigma(options: dict, key: str = "sigmas") -> None | float:
     if not isinstance(options, dict):
         return None
     sigmas = options.get(key)
     if sigmas is None:
         return None
+    if isinstance(sigmas, float):
+        return sigmas
     return sigmas.detach().cpu().max().item()
 
 
-def check_time(options, start_sigma, end_sigma):
-    sigma = get_sigma(options)
+def check_time(time_arg: dict | float, start_sigma: float, end_sigma: float) -> bool:
+    sigma = get_sigma(time_arg) if not isinstance(time_arg, float) else time_arg
     if sigma is None:
         return False
     return sigma <= start_sigma and sigma >= end_sigma
@@ -57,6 +66,7 @@ try:
 
         def scale_samples(*args: list, sigma=None, **kwargs: dict):  # noqa: ARG001
             return bleh_latentutils.scale_samples(*args, **kwargs)
+
     else:
         scale_samples = bleh_latentutils.scale_samples
     UPSCALE_METHODS = bleh_latentutils.UPSCALE_METHODS
@@ -75,10 +85,10 @@ except (ImportError, NotImplementedError):
 
 
 __all__ = (
+    "UPSCALE_METHODS",
     "check_time",
     "convert_time",
     "get_sigma",
     "parse_blocks",
     "scale_samples",
-    "UPSCALE_METHODS",
 )
