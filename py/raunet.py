@@ -318,6 +318,7 @@ class ApplyRAUNet:
         ca_use_blocks |= parse_blocks("input", ca_input_blocks)
 
         model = model.clone()
+        model.unpatch_model(device_to=model.model.device)
         ms = model.get_model_object("model_sampling")
 
         ca_start_sigma, ca_end_sigma = convert_time(
@@ -389,23 +390,18 @@ class ApplyRAUNet:
         if have_ca_output_blocks:
             model.set_model_output_block_patch(output_block_patch)
 
-        diffusion_model = model.get_model_object("diffusion_model")
-
         for block_type, block_index in use_blocks:
-            blocks = getattr(diffusion_model, f"{block_type}_blocks")
-            block_name = f"jankhd_{block_type}_{block_index}"
-
             subidx, block_fun = (
                 (0, forward_downsample)
                 if block_type == "input"
                 else (2, forward_upsample)
             )
-            block = blocks[block_index][subidx]
+            block_name = f"diffusion_model.{block_type}_blocks.{block_index}.{subidx}"
+            block = model.get_model_object(block_name)
             model.add_object_patch(
                 f"{block_name}.forward",
                 partial(block_fun, block_index, block, block.forward, hdconfig),
             )
-            setattr(model.model, block_name, block)
 
         GLOBAL_STATE.apply_patches()
 
