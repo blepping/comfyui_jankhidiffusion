@@ -136,17 +136,17 @@ class ApplyMSWMSAAttention:
             orig_height // downsample_ratio,
             orig_width // downsample_ratio,
         )
-        window_size = WindowSize(height // 2, width // 2)
+        wheight, wwidth = height // 2, width // 2
 
         if shift == 0:
             shift_size = ShiftSize(0, 0)
         elif shift == 1:
-            shift_size = ShiftSize(window_size[0] // 4, window_size[1] // 4)
+            shift_size = ShiftSize(wheight // 4, wwidth // 4)
         elif shift == 2:
-            shift_size = ShiftSize(window_size[0] // 4 * 2, window_size[1] // 4 * 2)
+            shift_size = ShiftSize(wheight // 4 * 2, wwidth // 4 * 2)
         else:
-            shift_size = ShiftSize(window_size[0] // 4 * 3, window_size[1] // 4 * 3)
-        return (window_size, shift_size, height, width)
+            shift_size = ShiftSize(wheight // 4 * 3, wwidth // 4 * 3)
+        return (WindowSize(wheight, wwidth), shift_size, height, width)
 
     @classmethod
     def patch(
