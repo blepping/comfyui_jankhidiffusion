@@ -1,272 +1,326 @@
+from __future__ import annotations
+
+import logging
 import os
 import sys
+from functools import partial
+from typing import TYPE_CHECKING
 
 import torch
 from comfy.ldm.modules.diffusionmodules import openaimodel
-from comfy.ops import disable_weight_init
 
-from .utils import *
-
-nn = torch.nn
-F = nn.functional
-
-NO_CONTROLNET_WORKAROUND = (
-    os.environ.get("JANKHIDIFFUSION_NO_CONTROLNET_WORKAROUND") is not None
+from .utils import (
+    UPSCALE_METHODS,
+    check_time,
+    convert_time,
+    get_sigma,
+    parse_blocks,
+    scale_samples,
 )
-CONTROLNET_SCALE_ARGS = {"mode": "bilinear", "align_corners": False}
+
+if TYPE_CHECKING:
+    from typing import Callable
+
+    from comfy.model_patcher import ModelPatcher
+
+F = torch.nn.functional
 
 
-class HDConfigClass:
-    enabled = False
-    start_sigma = None
-    end_sigma = None
-    use_blocks = None
-    two_stage_upscale = True
-    upscale_mode = "bislerp"
+class HDConfig:
+    def __init__(
+        self,
+        start_sigma: float,
+        end_sigma: float,
+        use_blocks: dict,
+        upscale_mode: str,
+        two_stage_upscale_mode: str,
+    ):
+        self.curr_sigma: None | float = None
+        self.start_sigma = start_sigma
+        self.end_sigma = end_sigma
+        self.use_blocks = use_blocks
+        self.upscale_mode = upscale_mode
+        self.two_stage_upscale_mode = two_stage_upscale_mode
 
-    def check(self, topts):
-        if not self.enabled or not isinstance(topts, dict):
-            return False
-        if topts.get("block") not in self.use_blocks:
+    def check(self, topts: dict) -> bool:
+        if not isinstance(topts, dict) or topts.get("block") not in self.use_blocks:
             return False
         return check_time(topts, self.start_sigma, self.end_sigma)
 
 
-HDCONFIG = HDConfigClass()
-
-ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
-ORIG_APPLY_CONTROL = openaimodel.apply_control
-
-PATCHED_FREEU = False
+GLOBAL_STATE: HDState
 
 
-# Try to be compatible with FreeU Advanced.
-def try_patch_freeu_advanced():
-    global PATCHED_FREEU  # noqa: PLW0603
-    if PATCHED_FREEU:
-        return
-    # We only try one time.
-    PATCHED_FREEU = True
-    fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
-    if not fua_nodes:
-        return
-
-    def fu_forward_timestep_embed(*args: list, **kwargs: dict):
-        fun = (
-            hd_forward_timestep_embed
-            if HDCONFIG.enabled
-            else ORIG_FORWARD_TIMESTEP_EMBED
+class HDState:
+    def __init__(self):
+        self.no_controlnet_workaround = (
+            os.environ.get("JANKHIDIFFUSION_NO_CONTROLNET_WORKAROUND") is not None
         )
-        return fun(*args, **kwargs)
-        if not HDCONFIG.enabled:
-            return ORIG_FORWARD_TIMESTEP_EMBED(*args, **kwargs)
-        return hd_forward_timestep_embed(*args, **kwargs)
+        self.controlnet_scale_args = {"mode": "bilinear", "align_corners": False}
+        self.patched_freeu_advanced = False
+        self.orig_apply_control = openaimodel.apply_control
+        self.orig_fua_apply_control = None
 
-    def fu_apply_control(*args: list, **kwargs: dict):
-        fun = hd_apply_control if HDCONFIG.enabled else ORIG_APPLY_CONTROL
-        return fun(*args, **kwargs)
-
-    fua_nodes.forward_timestep_embed = fu_forward_timestep_embed
-    if not NO_CONTROLNET_WORKAROUND:
-        fua_nodes.apply_control = fu_apply_control
-    print("** jankhidiffusion: Patched FreeU_Advanced")
-
-
-def hd_apply_control(h, control, name):
-    ctrls = control.get(name) if control is not None else None
-    if ctrls is None or len(ctrls) == 0:
-        return h
-    ctrl = ctrls.pop()
-    if ctrl is None:
-        return h
-    if ctrl.shape[-2:] != h.shape[-2:]:
-        print(
-            f"* jankhidiffusion: Scaling controlnet conditioning: {ctrl.shape[-2:]} -> {h.shape[-2:]}",
-        )
-        ctrl = F.interpolate(ctrl, size=h.shape[-2:], **CONTROLNET_SCALE_ARGS)
-    h += ctrl
-    return h
-
-
-def try_patch_apply_control():
-    global ORIG_APPLY_CONTROL  # noqa: PLW0603
-    if openaimodel.apply_control is hd_apply_control or NO_CONTROLNET_WORKAROUND:
-        return
-    ORIG_APPLY_CONTROL = openaimodel.apply_control
-    openaimodel.apply_control = hd_apply_control
-
-
-class NotFound:
-    pass
-
-
-def hd_forward_timestep_embed(ts, x, emb, *args: list, **kwargs: dict):
-    transformer_options = kwargs.get("transformer_options", NotFound)
-    output_shape = kwargs.get("output_shape", NotFound)
-    transformer_options = (
-        args[1] if transformer_options is NotFound and len(args) > 1 else {}
-    )
-    output_shape = args[2] if output_shape is NotFound and len(args) > 2 else None
-    for layer in ts:
-        if isinstance(layer, HDUpsample):
-            x = layer.forward(
-                x,
-                output_shape=output_shape,
-                transformer_options=transformer_options,
+    @classmethod
+    def hd_apply_control(
+        cls,
+        h: torch.Tensor,
+        control: None | dict,
+        name: str,
+    ) -> torch.Tensor:
+        ctrls = control.get(name) if control is not None else None
+        if ctrls is None or len(ctrls) == 0:
+            return h
+        ctrl = ctrls.pop()
+        if ctrl is None:
+            return h
+        if ctrl.shape[-2:] != h.shape[-2:]:
+            logging.info(
+                f"* jankhidiffusion: Scaling controlnet conditioning: {ctrl.shape[-2:]} -> {h.shape[-2:]}",
             )
-        elif isinstance(layer, HDDownsample):
-            x = layer.forward(x, transformer_options=transformer_options)
-        else:
-            x = ORIG_FORWARD_TIMESTEP_EMBED((layer,), x, emb, *args, **kwargs)
-    return x
+            ctrl = F.interpolate(ctrl, size=h.shape[-2:], **cls.controlnet_scale_args)
+        h += ctrl
+        return h
 
-
-OrigUpsample, OrigDownsample = openaimodel.Upsample, openaimodel.Downsample
-
-
-class HDUpsample(OrigUpsample):
-    def forward(self, x, output_shape=None, transformer_options=None):
+    def try_patch_apply_control(self) -> None:
         if (
-            self.dims == 3
-            or not self.use_conv
-            or not HDCONFIG.check(transformer_options)
+            self.no_controlnet_workaround
+            or openaimodel.apply_control == self.hd_apply_control
         ):
-            return super().forward(x, output_shape=output_shape)
-        shape = (
-            output_shape[2:4]
-            if output_shape is not None
-            else (x.shape[2] * 4, x.shape[3] * 4)
-        )
-        if HDCONFIG.two_stage_upscale:
-            x = F.interpolate(x, size=(shape[0] // 2, shape[1] // 2), mode="nearest")
+            return
+        self.orig_apply_control = openaimodel.apply_control
+        openaimodel.apply_control = self.hd_apply_control
+        logging.info("** jankhidiffusion: Patched openaimodel.apply_control")
+
+    # Try to be compatible with FreeU Advanced.
+    def try_patch_freeu_advanced(self) -> None:
+        if self.patched_freeu_advanced or self.no_controlnet_workaround:
+            return
+
+        # We only try one time.
+        self.patched_freeu_advanced = True
+        fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
+        if not fua_nodes:
+            return
+
+        self.orig_fua_apply_control = fua_nodes.apply_control
+        fua_nodes.apply_control = self.hd_apply_control
+        logging.info("** jankhidiffusion: Patched FreeU_Advanced")
+
+    def apply_patches(self) -> None:
+        self.try_patch_apply_control()
+        self.try_patch_freeu_advanced()
+
+    def revert_patches(self) -> None:
+        if openaimodel.apply_control == self.hd_apply_control:
+            openaimodel.apply_control = self.orig_apply_control
+            logging.info("** jankhidiffusion: Reverted openaimodel.apply_control patch")
+        if not self.patched_freeu_advanced:
+            return
+        fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
+        if not fua_nodes:
+            logging.warning(
+                "** jankhidiffusion: Unexpectedly could not revert FreeU_Advanced patches",
+            )
+            return
+        fua_nodes.apply_control = self.orig_fua_apply_control
+        self.patched_freeu_advanced = False
+        logging.info("** jankhidiffusion: Reverted FreeU_Advanced patch")
+
+
+GLOBAL_STATE = HDState()
+
+
+def forward_upsample(  # noqa: PLR0917
+    block_index: int,
+    model: object,
+    orig_forward: Callable,
+    hdconfig: HDConfig,
+    x: torch.Tensor,
+    output_shape: None | tuple = None,
+) -> torch.Tensor:
+    if (
+        model.dims == 3
+        or not model.use_conv
+        or not hdconfig.check({
+            "sigmas": hdconfig.curr_sigma,
+            "block": ("output", block_index),
+        })
+    ):
+        return orig_forward(x, output_shape=output_shape)
+
+    shape = (
+        output_shape[2:4]
+        if output_shape is not None
+        else (x.shape[2] * 4, x.shape[3] * 4)
+    )
+    if hdconfig.two_stage_upscale_mode != "disabled":
         x = scale_samples(
             x,
-            shape[1],
-            shape[0],
-            mode=HDCONFIG.upscale_mode,
-            sigma=get_sigma(transformer_options),
+            shape[1] // 2,
+            shape[0] // 2,
+            mode=hdconfig.two_stage_upscale_mode,
+            sigma=hdconfig.curr_sigma,
         )
-        return self.conv(x)
-
-
-class HDDownsample(OrigDownsample):
-    COPY_OP_KEYS = (
-        "comfy_cast_weights",
-        "weight_function",
-        "bias_function",
-        "weight",
-        "bias",
+    x = scale_samples(
+        x,
+        shape[1],
+        shape[0],
+        mode=hdconfig.upscale_mode,
+        sigma=hdconfig.curr_sigma,
     )
-
-    def __init__(self, *args: list, dtype=None, device=None, **kwargs: dict):
-        super().__init__(*args, dtype=dtype, device=device, **kwargs)
-        self.dtype = dtype
-        self.device = device
-        self.ops = kwargs.get("operations", disable_weight_init)
-
-    def forward(self, x, transformer_options=None):
-        if (
-            self.dims == 3
-            or not self.use_conv
-            or not HDCONFIG.check(transformer_options)
-        ):
-            return super().forward(x)
-        tempop = self.ops.conv_nd(
-            self.dims,
-            self.channels,
-            self.out_channels,
-            3,  # kernel size
-            stride=(4, 4),
-            padding=(2, 2),
-            dilation=(2, 2),
-            dtype=self.dtype,
-            device=self.device,
-        )
-        for k in self.COPY_OP_KEYS:
-            setattr(tempop, k, getattr(self.op, k))
-        return tempop(x)
+    return model.conv(x)
 
 
-# Necessary to monkeypatch the built in blocks before any models are loaded.
-openaimodel.Upsample = HDUpsample
-openaimodel.Downsample = HDDownsample
+FORWARD_DOWNSAMPLE_COPY_OP_KEYS = (
+    "comfy_cast_weights",
+    "weight_function",
+    "bias_function",
+    "weight",
+    "bias",
+)
+
+
+def forward_downsample(
+    block_index: int,
+    model: object,
+    orig_forward: Callable,
+    hdconfig: HDConfig,
+    x: torch.Tensor,
+) -> torch.Tensor:
+    if (
+        model.dims == 3
+        or not model.use_conv
+        or not hdconfig.check({
+            "sigmas": hdconfig.curr_sigma,
+            "block": ("input", block_index),
+        })
+    ):
+        return orig_forward(x)
+
+    tempop = openaimodel.ops.conv_nd(
+        model.dims,
+        model.channels,
+        model.out_channels,
+        3,  # kernel size
+        stride=(4, 4),
+        padding=(2, 2),
+        dilation=(2, 2),
+        dtype=x.dtype,
+        device=x.device,
+    )
+    for k in FORWARD_DOWNSAMPLE_COPY_OP_KEYS:
+        setattr(tempop, k, getattr(model.op, k))
+    return tempop(x)
 
 
 class ApplyRAUNet:
     RETURN_TYPES = ("MODEL",)
     FUNCTION = "patch"
-    CATEGORY = "model_patches"
+    CATEGORY = "model_patches/unet"
 
     @classmethod
-    def INPUT_TYPES(cls):
+    def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "enabled": ("BOOLEAN", {"default": True}),
+                "model": ("MODEL",),
                 "input_blocks": ("STRING", {"default": "3"}),
                 "output_blocks": ("STRING", {"default": "8"}),
-                "time_mode": (
-                    (
-                        "percent",
-                        "timestep",
-                        "sigma",
-                    ),
+                "time_mode": (("percent", "timestep", "sigma"),),
+                "start_time": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 999.0,
+                        "round": False,
+                        "step": 0.01,
+                    },
                 ),
-                "start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
-                "end_time": ("FLOAT", {"default": 0.45, "min": 0.0, "max": 999.0}),
-                "two_stage_upscale": ("BOOLEAN", {"default": False}),
+                "end_time": (
+                    "FLOAT",
+                    {
+                        "default": 0.45,
+                        "min": 0.0,
+                        "max": 999.0,
+                        "round": False,
+                        "step": 0.01,
+                    },
+                ),
                 "upscale_mode": (UPSCALE_METHODS,),
-                "ca_start_time": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 999.0}),
-                "ca_end_time": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 999.0}),
+                "ca_start_time": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 999.0,
+                        "round": False,
+                        "step": 0.01,
+                    },
+                ),
+                "ca_end_time": (
+                    "FLOAT",
+                    {
+                        "default": 0.3,
+                        "min": 0.0,
+                        "max": 999.0,
+                        "round": False,
+                        "step": 0.01,
+                    },
+                ),
                 "ca_input_blocks": ("STRING", {"default": "4"}),
                 "ca_output_blocks": ("STRING", {"default": "8"}),
                 "ca_upscale_mode": (UPSCALE_METHODS,),
-                "model": ("MODEL",),
+                "ca_downscale_mode": (
+                    ("avg_pool2d", *UPSCALE_METHODS),
+                    {"default": "avg_pool2d"},
+                ),
+                "ca_downscale_factor": (
+                    "FLOAT",
+                    {"default": 2.0, "min": 0.01, "step": 0.1, "round": False},
+                ),
+                "two_stage_upscale_mode": (
+                    ("disabled", *UPSCALE_METHODS),
+                    {"default": "disabled"},
+                ),
             },
         }
 
+    @classmethod
     def patch(
-        self,
-        enabled,
-        model,
-        input_blocks,
-        output_blocks,
-        time_mode,
-        start_time,
-        end_time,
-        two_stage_upscale,
-        upscale_mode,
-        ca_start_time,
-        ca_end_time,
-        ca_input_blocks,
-        ca_output_blocks,
-        ca_upscale_mode,
-    ):
-        global ORIG_FORWARD_TIMESTEP_EMBED  # noqa: PLW0603
-        use_blocks = parse_blocks("input", input_blocks)
-        use_blocks |= parse_blocks("output", output_blocks)
-        ca_use_blocks = parse_blocks("input", ca_input_blocks)
-        ca_use_blocks |= parse_blocks("output", ca_output_blocks)
+        cls,
+        *,
+        model: ModelPatcher,
+        input_blocks: str,
+        output_blocks: str,
+        time_mode: str,
+        start_time: float,
+        end_time: float,
+        upscale_mode: str,
+        ca_start_time: float,
+        ca_end_time: float,
+        ca_input_blocks: str,
+        ca_output_blocks: str,
+        ca_upscale_mode: str,
+        ca_downscale_mode: str = "avg_pool2d",
+        ca_downscale_factor: float = 2.0,
+        two_stage_upscale_mode: str = "disabled",
+    ) -> tuple[ModelPatcher]:
+        if ca_downscale_mode == "avg_pool2d" and not ca_downscale_factor.is_integer():
+            raise ValueError(
+                "avg_pool2d downscale mode can only be used with integer downscale factors",
+            )
+        use_blocks = parse_blocks("output", output_blocks)
+        use_blocks |= parse_blocks("input", input_blocks)
+
+        ca_use_blocks = parse_blocks("output", ca_output_blocks)
+        have_ca_output_blocks = len(ca_use_blocks) > 0
+        ca_use_blocks |= parse_blocks("input", ca_input_blocks)
 
         model = model.clone()
-        if not enabled:
-            HDCONFIG.enabled = False
-            if ORIG_FORWARD_TIMESTEP_EMBED is not None:
-                openaimodel.forward_timestep_embed = ORIG_FORWARD_TIMESTEP_EMBED
-            if (
-                openaimodel.apply_control is not ORIG_APPLY_CONTROL
-                and not NO_CONTROLNET_WORKAROUND
-            ):
-                openaimodel.apply_control = ORIG_APPLY_CONTROL
-            return (model,)
-
+        model.unpatch_model(device_to=model.model.device)
         ms = model.get_model_object("model_sampling")
 
-        HDCONFIG.start_sigma, HDCONFIG.end_sigma = convert_time(
-            ms,
-            time_mode,
-            start_time,
-            end_time,
-        )
         ca_start_sigma, ca_end_sigma = convert_time(
             ms,
             time_mode,
@@ -274,58 +328,96 @@ class ApplyRAUNet:
             ca_end_time,
         )
 
-        def input_block_patch(h, extra_options):
-            if extra_options.get("block") not in ca_use_blocks or not check_time(
-                extra_options,
+        hdconfig = HDConfig(
+            *convert_time(
+                ms,
+                time_mode,
+                start_time,
+                end_time,
+            ),
+            use_blocks,
+            upscale_mode,
+            two_stage_upscale_mode,
+        )
+
+        def input_block_patch(h: torch.Tensor, extra_options: dict) -> torch.Tensor:
+            block_type, block_index = extra_options.get("block", ("unknown", -1))
+            if block_index == 0:
+                hdconfig.curr_sigma = get_sigma(extra_options)
+            if (block_type, block_index) not in ca_use_blocks or not check_time(
+                hdconfig.curr_sigma,
                 ca_start_sigma,
                 ca_end_sigma,
             ):
                 return h
-            return F.avg_pool2d(h, kernel_size=(2, 2))
+            if ca_downscale_mode == "avg_pool2d":
+                return F.avg_pool2d(
+                    h,
+                    kernel_size=(int(ca_downscale_factor), int(ca_downscale_factor)),
+                )
+            return scale_samples(
+                h,
+                max(1, int(h.shape[-1] // ca_downscale_factor)),
+                max(1, int(h.shape[-2] // ca_downscale_factor)),
+                mode=ca_downscale_mode,
+                sigma=hdconfig.curr_sigma,
+            )
 
-        def output_block_patch(h, hsp, extra_options):
+        def output_block_patch(
+            h: torch.Tensor,
+            hsp: torch.Tensor,
+            extra_options: dict,
+        ) -> torch.Tensor:
             if extra_options.get("block") not in ca_use_blocks or not check_time(
-                extra_options,
+                hdconfig.curr_sigma,
                 ca_start_sigma,
                 ca_end_sigma,
             ):
                 return h, hsp
-            sigma = get_sigma(extra_options)
+            sigma = hdconfig.curr_sigma
             block = extra_options.get("block", ("", 0))[1]
             if sigma is not None and (block < 3 or block > 6):
                 sigma /= 16
             return scale_samples(
                 h,
-                hsp.shape[3],
-                hsp.shape[2],
+                hsp.shape[-1],
+                hsp.shape[-2],
                 mode=ca_upscale_mode,
                 sigma=sigma,
             ), hsp
 
         model.set_model_input_block_patch(input_block_patch)
-        model.set_model_output_block_patch(output_block_patch)
-        HDCONFIG.use_blocks = use_blocks
-        HDCONFIG.two_stage_upscale = two_stage_upscale
-        HDCONFIG.upscale_mode = upscale_mode
-        HDCONFIG.enabled = True
-        if openaimodel.forward_timestep_embed is not hd_forward_timestep_embed:
-            try_patch_freeu_advanced()
-            ORIG_FORWARD_TIMESTEP_EMBED = openaimodel.forward_timestep_embed
-            openaimodel.forward_timestep_embed = hd_forward_timestep_embed
-        try_patch_apply_control()
+        if have_ca_output_blocks:
+            model.set_model_output_block_patch(output_block_patch)
+
+        for block_type, block_index in use_blocks:
+            subidx, block_fun = (
+                (0, forward_downsample)
+                if block_type == "input"
+                else (2, forward_upsample)
+            )
+            block_name = f"diffusion_model.{block_type}_blocks.{block_index}.{subidx}"
+            block = model.get_model_object(block_name)
+            model.add_object_patch(
+                f"{block_name}.forward",
+                partial(block_fun, block_index, block, block.forward, hdconfig),
+            )
+
+        GLOBAL_STATE.apply_patches()
+
         return (model,)
 
 
 class ApplyRAUNetSimple:
     RETURN_TYPES = ("MODEL",)
-    FUNCTION = "go"
-    CATEGORY = "model_patches"
+    FUNCTION = "patch"
+    CATEGORY = "model_patches/unet"
 
     @classmethod
-    def INPUT_TYPES(cls):
+    def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "enabled": ("BOOLEAN", {"default": True}),
+                "model": ("MODEL",),
                 "model_type": (("SD15", "SDXL"),),
                 "res_mode": (
                     (
@@ -346,11 +438,19 @@ class ApplyRAUNetSimple:
                         *UPSCALE_METHODS,
                     ),
                 ),
-                "model": ("MODEL",),
             },
         }
 
-    def go(self, enabled, model_type, res_mode, upscale_mode, ca_upscale_mode, model):
+    @classmethod
+    def patch(
+        cls,
+        *,
+        model: ModelPatcher,
+        model_type: str,
+        res_mode: str,
+        upscale_mode: str,
+        ca_upscale_mode: str,
+    ) -> tuple[ModelPatcher]:
         if upscale_mode == "default":
             upscale_mode = "bicubic"
         if ca_upscale_mode == "default":
@@ -379,7 +479,6 @@ class ApplyRAUNetSimple:
                 time_range = (1.0, 0.0)
                 ca_time_range = (1.0, 0.0)
                 ca_blocks = ("", "")
-                enabled = False
             elif res == "high":
                 time_range = (0.0, 0.5)
                 ca_time_range = (1.0, 0.0)
@@ -390,25 +489,25 @@ class ApplyRAUNetSimple:
                 raise ValueError("Unknown res_mode")
         else:
             raise ValueError("Unknown model type")
-        if not enabled:
-            print("** ApplyRAUNetSimple: Disabled")
-            return (model.clone(),)
-        prettyblocks = " / ".join(b if b else "none" for b in blocks)
-        prettycablocks = " / ".join(b if b else "none" for b in ca_blocks)
-        print(
+
+        prettyblocks = " / ".join(b or "none" for b in blocks)
+        prettycablocks = " / ".join(b or "none" for b in ca_blocks)
+        logging.info(
             f"** ApplyRAUNetSimple: Using preset {model_type} {res}: upscale {upscale_mode}, in/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}  |  CA upscale {ca_upscale_mode},  CA in/out blocks [{prettycablocks}], CA start/end percent {ca_time_range[0]:.2}/{ca_time_range[1]:.2}",
         )
-        return ApplyRAUNet().patch(
-            True,  # noqa: FBT003
-            model,
-            *blocks,
-            "percent",
-            *time_range,
-            False,  # noqa: FBT003
-            upscale_mode,
-            *ca_time_range,
-            *ca_blocks,
-            ca_upscale_mode,
+        return ApplyRAUNet.patch(
+            model=model,
+            input_blocks=blocks[0],
+            output_blocks=blocks[1],
+            time_mode="percent",
+            start_time=time_range[0],
+            end_time=time_range[1],
+            upscale_mode=upscale_mode,
+            ca_start_time=ca_time_range[0],
+            ca_end_time=ca_time_range[1],
+            ca_input_blocks=ca_blocks[0],
+            ca_output_blocks=ca_blocks[1],
+            ca_upscale_mode=ca_upscale_mode,
         )
 
 
