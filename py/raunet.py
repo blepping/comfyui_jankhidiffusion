@@ -85,7 +85,7 @@ class HDState:
     def try_patch_apply_control(self) -> None:
         if (
             self.no_controlnet_workaround
-            or openaimodel.apply_control is self.hd_apply_control
+            or openaimodel.apply_control == self.hd_apply_control
         ):
             return
         self.orig_apply_control = openaimodel.apply_control
@@ -112,7 +112,7 @@ class HDState:
         self.try_patch_freeu_advanced()
 
     def revert_patches(self) -> None:
-        if openaimodel.apply_control is self.hd_apply_control:
+        if openaimodel.apply_control == self.hd_apply_control:
             openaimodel.apply_control = self.orig_apply_control
             logging.info("** jankhidiffusion: Reverted openaimodel.apply_control patch")
         if not self.patched_freeu_advanced:
