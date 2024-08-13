@@ -3,6 +3,8 @@
 Janky experimental implementation of [HiDiffusion](https://github.com/megvii-research/HiDiffusion) for
 [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 
+See the [changelog](changelog.md) for recent user-visible changes.
+
 ## Description
 
 Read the link above for an official description. The following is just my understanding and may or may not be
@@ -229,7 +231,7 @@ input 3, output 5 and disabling CA (set the `ca_start_time` to 1.0) _or_ setting
 and disabling the upsampler/downsampler patch (set `start_time` to 1.0). I don't recommend leaving both
 enabled at the same time, but feel free to experiment. SDXL seems very sensitive to these settings. Also I don't
 recommend enabling RAUNet at all unless you are generating at a resolution significantly higher than what the
-model supports.
+model supports. Using an ancestral or SDE sampler seems to work best with SDXL and RAUNet.
 
 Why does setting input 2 correspond with output 7? I actually have no idea, I would have expected it to be
 6.

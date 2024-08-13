@@ -304,7 +304,7 @@ class ApplyRAUNet:
         ca_upscale_mode: str,
         ca_downscale_mode: str = "avg_pool2d",
         ca_downscale_factor: float = 2.0,
-        two_stage_upscale_mode: str,
+        two_stage_upscale_mode: str = "disabled",
     ) -> tuple[ModelPatcher]:
         if ca_downscale_mode == "avg_pool2d" and not ca_downscale_factor.is_integer():
             raise ValueError(
@@ -438,13 +438,6 @@ class ApplyRAUNetSimple:
                         *UPSCALE_METHODS,
                     ),
                 ),
-                "two_stage_upscale_mode": (
-                    (
-                        "default",
-                        "disabled",
-                        *UPSCALE_METHODS,
-                    ),
-                ),
             },
         }
 
@@ -457,14 +450,11 @@ class ApplyRAUNetSimple:
         res_mode: str,
         upscale_mode: str,
         ca_upscale_mode: str,
-        two_stage_upscale_mode: str,
     ) -> tuple[ModelPatcher]:
         if upscale_mode == "default":
             upscale_mode = "bicubic"
         if ca_upscale_mode == "default":
             ca_upscale_mode = "bicubic"
-        if two_stage_upscale_mode == "default":
-            two_stage_upscale_mode = "disabled"
         res = res_mode.split(" ", 1)[0]
         if model_type == "SD15":
             blocks = ("3", "8")
@@ -506,15 +496,18 @@ class ApplyRAUNetSimple:
             f"** ApplyRAUNetSimple: Using preset {model_type} {res}: upscale {upscale_mode}, in/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}  |  CA upscale {ca_upscale_mode},  CA in/out blocks [{prettycablocks}], CA start/end percent {ca_time_range[0]:.2}/{ca_time_range[1]:.2}",
         )
         return ApplyRAUNet.patch(
-            model,
-            *blocks,
-            "percent",
-            *time_range,
-            upscale_mode,
-            *ca_time_range,
-            *ca_blocks,
-            ca_upscale_mode,
-            two_stage_upscale_mode,
+            model=model,
+            input_blocks=blocks[0],
+            output_blocks=blocks[1],
+            time_mode="percent",
+            start_time=time_range[0],
+            end_time=time_range[1],
+            upscale_mode=upscale_mode,
+            ca_start_time=ca_time_range[0],
+            ca_end_time=ca_time_range[1],
+            ca_input_blocks=ca_blocks[0],
+            ca_output_blocks=ca_blocks[1],
+            ca_upscale_mode=ca_upscale_mode,
         )
 
 

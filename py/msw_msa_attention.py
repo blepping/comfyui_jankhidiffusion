@@ -264,7 +264,15 @@ class ApplyMSWMSAAttentionSimple:
         logging.info(
             f"** ApplyMSWMSAAttentionSimple: Using preset {model_type}: in/mid/out blocks [{prettyblocks}], start/end percent {time_range[0]:.2}/{time_range[1]:.2}",
         )
-        return ApplyMSWMSAAttention.patch(model, *blocks, "percent", *time_range)
+        return ApplyMSWMSAAttention.patch(
+            model=model,
+            input_blocks=blocks[0],
+            middle_blocks=blocks[1],
+            output_blocks=blocks[2],
+            time_mode="percent",
+            start_time=time_range[0],
+            end_time=time_range[1],
+        )
 
 
 __all__ = ("ApplyMSWMSAAttention", "ApplyMSWMSAAttentionSimple")
