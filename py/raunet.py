@@ -216,17 +216,41 @@ def forward_downsample(
 
 class ApplyRAUNet:
     RETURN_TYPES = ("MODEL",)
+    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect",)
     FUNCTION = "patch"
     CATEGORY = "model_patches/unet"
+    DESCRIPTION = "This node is used to enable generation at higher resolutions than a model was trained for with less artifacts or other negative effects. This is the advanced version with more tuneable parameters, use ApplyRAUNetSimple if this seems too complex. NOTE: Only supports SD1.x, SD2.x and SDXL."
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "model": ("MODEL",),
-                "input_blocks": ("STRING", {"default": "3"}),
-                "output_blocks": ("STRING", {"default": "8"}),
-                "time_mode": (("percent", "timestep", "sigma"),),
+                "model": (
+                    "MODEL",
+                    {
+                        "tooltip": "Model to be patched with the RAUNet effect.",
+                    },
+                ),
+                "input_blocks": (
+                    "STRING",
+                    {
+                        "default": "3",
+                        "tooltip": "Comma-separated list of input Downsample blocks. The default of 3 will work with SD1.x and SDXL.",
+                    },
+                ),
+                "output_blocks": (
+                    "STRING",
+                    {
+                        "default": "8",
+                        "tooltip": "Comma-separated list of output Upsample blocks. The default is for SD1.x, for SDXL use 8.",
+                    },
+                ),
+                "time_mode": (
+                    ("percent", "timestep", "sigma"),
+                    {
+                        "tooltip": "Time mode controls how to interpret the values in start_time and end_time.",
+                    },
+                ),
                 "start_time": (
                     "FLOAT",
                     {
@@ -235,6 +259,7 @@ class ApplyRAUNet:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time normal RAUNet effects start applying - value is inclusive.",
                     },
                 ),
                 "end_time": (
@@ -245,9 +270,15 @@ class ApplyRAUNet:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time normal RAUNet effects end - value is inclusive.",
                     },
                 ),
-                "upscale_mode": (UPSCALE_METHODS,),
+                "upscale_mode": (
+                    UPSCALE_METHODS,
+                    {
+                        "tooltip": "Method used when upscaling latents in output Upscale blocks.",
+                    },
+                ),
                 "ca_start_time": (
                     "FLOAT",
                     {
@@ -256,6 +287,7 @@ class ApplyRAUNet:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time normal cross-attention effects start applying - value is inclusive..",
                     },
                 ),
                 "ca_end_time": (
@@ -266,22 +298,52 @@ class ApplyRAUNet:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time normal cross-attention effects end - value is inclusive.",
                     },
                 ),
-                "ca_input_blocks": ("STRING", {"default": "4"}),
-                "ca_output_blocks": ("STRING", {"default": "8"}),
-                "ca_upscale_mode": (UPSCALE_METHODS,),
+                "ca_input_blocks": (
+                    "STRING",
+                    {
+                        "default": "4",
+                        "tooltip": "Comma separated list of input cross-attention blocks. Default is for SD1.x, for SDXL you can try using 2 (or just disable it).",
+                    },
+                ),
+                "ca_output_blocks": (
+                    "STRING",
+                    {
+                        "default": "8",
+                        "tooltip": "Comma-separated list of output cross-attention blocks. Default is for SD1.x, for SDXL you can try using 7 (or just disable it).",
+                    },
+                ),
+                "ca_upscale_mode": (
+                    UPSCALE_METHODS,
+                    {
+                        "tooltip": "Mode used when upscaling latents in output cross-attention blocks.",
+                    },
+                ),
                 "ca_downscale_mode": (
                     ("avg_pool2d", *UPSCALE_METHODS),
-                    {"default": "avg_pool2d"},
+                    {
+                        "default": "avg_pool2d",
+                        "tooltip": "Mode used when downscaling latents in output cross-attention blocks (use avg_pool2d for normal Hidiffusion behavior).",
+                    },
                 ),
                 "ca_downscale_factor": (
                     "FLOAT",
-                    {"default": 2.0, "min": 0.01, "step": 0.1, "round": False},
+                    {
+                        "default": 2.0,
+                        "min": 0.01,
+                        "step": 0.1,
+                        "round": False,
+                        "tooltip": "Factor to downscale with in cross-attention, 2.0 means downscale to half size. Must be an integer when using ca_downscale_mode avg_pool2d.",
+                    },
                 ),
                 "two_stage_upscale_mode": (
                     ("disabled", *UPSCALE_METHODS),
-                    {"default": "disabled"},
+                    {
+                        "default": "disabled",
+                        "tooltip": "When upscaling in output Upscale blocks (non-NA), do half the upscale with this mode and half with the normal upscale mode. May produce a different effect, isn't necessarily better.",
+                    },
                 ),
             },
         }
@@ -410,33 +472,54 @@ class ApplyRAUNet:
 
 class ApplyRAUNetSimple:
     RETURN_TYPES = ("MODEL",)
+    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect",)
     FUNCTION = "patch"
     CATEGORY = "model_patches/unet"
+    DESCRIPTION = "This node is used to enable generation at higher resolutions than a model was trained for with less artifacts or other negative effects. This is the simplified version with less parameters, use ApplyRAUNet if you require more control. NOTE: Only supports SD1.x, SD2.x and SDXL."
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "model": ("MODEL",),
-                "model_type": (("SD15", "SDXL"),),
+                "model": (
+                    "MODEL",
+                    {
+                        "tooltip": "Model to be patched with the RAUNet effect.",
+                    },
+                ),
+                "model_type": (
+                    ("SD15", "SDXL"),
+                    {
+                        "tooltip": "Model type being patched. Choose SD15 for SD 1.4, SD 2.x.",
+                    },
+                ),
                 "res_mode": (
                     (
                         "high (1536-2048)",
                         "low (1024 or lower)",
                         "ultra (over 2048)",
                     ),
+                    {
+                        "tooltip": "Resolution mode hint, does not have to correspond to the actual size.",
+                    },
                 ),
                 "upscale_mode": (
                     (
                         "default",
                         *UPSCALE_METHODS,
                     ),
+                    {
+                        "tooltip": "Method used when upscaling latents in output Upsample blocks.",
+                    },
                 ),
                 "ca_upscale_mode": (
                     (
                         "default",
                         *UPSCALE_METHODS,
                     ),
+                    {
+                        "tooltip": "Method used when upscaling latents in cross attention blocks.",
+                    },
                 ),
             },
         }

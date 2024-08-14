@@ -29,22 +29,45 @@ class ShiftSize(WindowSize):
 
 class ApplyMSWMSAAttention:
     RETURN_TYPES = ("MODEL",)
+    OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "patch"
     CATEGORY = "model_patches/unet"
+    DESCRIPTION = "This node applies an attention patch which _may_ slightly improve quality especially when generating at high resolutions. It is a large performance increase on SD1.x, may improve performance on SDXL. This is the advanced version of the node with more parameters, use ApplyMSWMSAAttentionSimple if this seems too complex. NOTE: Only supports SD1.x, SD2.x and SDXL."
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "input_blocks": ("STRING", {"default": "1,2"}),
-                "middle_blocks": ("STRING", {"default": ""}),
-                "output_blocks": ("STRING", {"default": "9,10,11"}),
+                "input_blocks": (
+                    "STRING",
+                    {
+                        "default": "1,2",
+                        "tooltip": "Comma-separated list of input blocks to patch. Default is for SD1.x, you can try 4,5 for SDXL",
+                    },
+                ),
+                "middle_blocks": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "tooltip": "Comma-separated list of middle blocks to patch. Generally not recommended.",
+                    },
+                ),
+                "output_blocks": (
+                    "STRING",
+                    {
+                        "default": "9,10,11",
+                        "tooltip": "Comma-separated list of output blocks to patch. Default is for SD1.x, you can try 5,4 for SDXL",
+                    },
+                ),
                 "time_mode": (
                     (
                         "percent",
                         "timestep",
                         "sigma",
                     ),
+                    {
+                        "tooltip": "Time mode controls how to interpret the values in start_time and end_time.",
+                    },
                 ),
                 "start_time": (
                     "FLOAT",
@@ -54,6 +77,7 @@ class ApplyMSWMSAAttention:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time the MSW-MSA attention effect starts applying - value is inclusive.",
                     },
                 ),
                 "end_time": (
@@ -64,9 +88,15 @@ class ApplyMSWMSAAttention:
                         "max": 999.0,
                         "round": False,
                         "step": 0.01,
+                        "tooltip": "Time the MSW-MSA attention effect ends - value is inclusive.",
                     },
                 ),
-                "model": ("MODEL",),
+                "model": (
+                    "MODEL",
+                    {
+                        "tooltip": "Model to patch with the MSW-MSA attention effect.",
+                    },
+                ),
             },
         }
 
@@ -235,15 +265,27 @@ class ApplyMSWMSAAttention:
 
 class ApplyMSWMSAAttentionSimple:
     RETURN_TYPES = ("MODEL",)
+    OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect",)
     FUNCTION = "go"
     CATEGORY = "model_patches/unet"
+    DESCRIPTION = "This node applies an attention patch which _may_ slightly improve quality especially when generating at high resolutions. It is a large performance increase on SD1.x, may improve performance on SDXL. This is the simplified version of the node with less parameters. Use ApplyMSWMSAAttention if you require more control. NOTE: Only supports SD1.x, SD2.x and SDXL."
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
         return {
             "required": {
-                "model_type": (("SD15", "SDXL"),),
-                "model": ("MODEL",),
+                "model_type": (
+                    ("SD15", "SDXL"),
+                    {
+                        "tooltip": "Model type being patched. Choose SD15 for SD 1.4, SD 2.x.",
+                    },
+                ),
+                "model": (
+                    "MODEL",
+                    {
+                        "tooltip": "Model to patch with the MSW-MSA attention effect.",
+                    },
+                ),
             },
         }
 
