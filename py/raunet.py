@@ -242,7 +242,7 @@ class ApplyRAUNet:
                     "STRING",
                     {
                         "default": "8",
-                        "tooltip": "Comma-separated list of output Upsample blocks. The default is for SD1.x, for SDXL use 8.",
+                        "tooltip": "Comma-separated list of output Upsample blocks. The default is for SD1.x, for SDXL use 5.",
                     },
                 ),
                 "time_mode": (
