@@ -1,14 +1,14 @@
 [project]
 name = "comfyui_jankhidiffusion"
-description = "Janky experimental attempt at implementing [a/HiDiffusion](https://github.com/megvii-research/HiDiffusion) for ComfyUI."
-version = "1.0.0"
-license = "LICENSE"
+description = "Janky implementation of HiDiffusion for ComfyUI. Enables generating at resolutions higher than what the model was trained for. Only supports SD 1.x (maybe 2.x) and SDXL."
+version = "0.8.0"
+license = { file = "LICENSE" }
 
 [project.urls]
 Repository = "https://github.com/blepping/comfyui_jankhidiffusion"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "blepping"
 DisplayName = "comfyui_jankhidiffusion"
 Icon = ""
