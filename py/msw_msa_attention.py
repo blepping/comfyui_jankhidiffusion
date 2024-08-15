@@ -265,7 +265,7 @@ class ApplyMSWMSAAttention:
 
 class ApplyMSWMSAAttentionSimple:
     RETURN_TYPES = ("MODEL",)
-    OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect",)
+    OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "go"
     CATEGORY = "model_patches/unet"
     DESCRIPTION = "This node applies an attention patch which _may_ slightly improve quality especially when generating at high resolutions. It is a large performance increase on SD1.x, may improve performance on SDXL. This is the simplified version of the node with less parameters. Use ApplyMSWMSAAttention if you require more control. NOTE: Only supports SD1.x, SD2.x and SDXL."

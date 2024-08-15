@@ -216,7 +216,7 @@ def forward_downsample(
 
 class ApplyRAUNet:
     RETURN_TYPES = ("MODEL",)
-    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect",)
+    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect.",)
     FUNCTION = "patch"
     CATEGORY = "model_patches/unet"
     DESCRIPTION = "This node is used to enable generation at higher resolutions than a model was trained for with less artifacts or other negative effects. This is the advanced version with more tuneable parameters, use ApplyRAUNetSimple if this seems too complex. NOTE: Only supports SD1.x, SD2.x and SDXL."
@@ -472,7 +472,7 @@ class ApplyRAUNet:
 
 class ApplyRAUNetSimple:
     RETURN_TYPES = ("MODEL",)
-    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect",)
+    OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect.",)
     FUNCTION = "patch"
     CATEGORY = "model_patches/unet"
     DESCRIPTION = "This node is used to enable generation at higher resolutions than a model was trained for with less artifacts or other negative effects. This is the simplified version with less parameters, use ApplyRAUNet if you require more control. NOTE: Only supports SD1.x, SD2.x and SDXL."
@@ -490,7 +490,7 @@ class ApplyRAUNetSimple:
                 "model_type": (
                     ("SD15", "SDXL"),
                     {
-                        "tooltip": "Model type being patched. Choose SD15 for SD 1.4, SD 2.x.",
+                        "tooltip": "Model type being patched. Choose SD15 for SD 1.4 or SD 2.x.",
                     },
                 ),
                 "res_mode": (
