@@ -54,7 +54,7 @@ GLOBAL_STATE: HDState
 class HDState:
     def __init__(self):
         self.no_controlnet_workaround = (
-            os.environ.get("JANKHIDIFFUSION_NO_CONTROLNET_WORKAROUND") is not None
+            "JANKHIDIFFUSION_NO_CONTROLNET_WORKAROUND" in os.environ
         )
         self.controlnet_scale_args = {"mode": "bilinear", "align_corners": False}
         self.patched_freeu_advanced = False
@@ -453,13 +453,22 @@ class ApplyRAUNet:
             model.set_model_output_block_patch(output_block_patch)
 
         for block_type, block_index in use_blocks:
-            subidx, block_fun = (
-                (0, forward_downsample)
-                if block_type == "input"
-                else (2, forward_upsample)
+            main_block = model.get_model_object(
+                f"diffusion_model.{block_type}_blocks.{block_index}",
             )
-            block_name = f"diffusion_model.{block_type}_blocks.{block_index}.{subidx}"
+            block_fun, expected_class = (
+                (forward_downsample, openaimodel.Downsample)
+                if block_type == "input"
+                else (forward_upsample, openaimodel.Upsample)
+            )
+            block_name = f"diffusion_model.{block_type}_blocks.{block_index}.{len(main_block) - 1}"
             block = model.get_model_object(block_name)
+            if not isinstance(block, expected_class):
+                block_type_name = getattr(type(block), "__name__", "unknown")
+                error_message = (
+                    f"User error: {block_type} {block_index} requires targeting an {expected_class.__name__} block but got block of type {block_type_name} instead.",
+                )
+                raise ValueError(error_message)  # noqa: TRY004
             model.add_object_patch(
                 f"{block_name}.forward",
                 partial(block_fun, block_index, block, block.forward, hdconfig),
