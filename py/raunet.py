@@ -61,9 +61,8 @@ class HDState:
         self.orig_apply_control = openaimodel.apply_control
         self.orig_fua_apply_control = None
 
-    @classmethod
     def hd_apply_control(
-        cls,
+        self,
         h: torch.Tensor,
         control: None | dict,
         name: str,
@@ -78,7 +77,7 @@ class HDState:
             logging.info(
                 f"* jankhidiffusion: Scaling controlnet conditioning: {ctrl.shape[-2:]} -> {h.shape[-2:]}",
             )
-            ctrl = F.interpolate(ctrl, size=h.shape[-2:], **cls.controlnet_scale_args)
+            ctrl = F.interpolate(ctrl, size=h.shape[-2:], **self.controlnet_scale_args)
         h += ctrl
         return h
 
