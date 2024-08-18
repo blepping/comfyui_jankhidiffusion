@@ -1,7 +1,7 @@
 [project]
 name = "comfyui_jankhidiffusion"
 description = "Janky implementation of HiDiffusion for ComfyUI. Enables generating at resolutions higher than what the model was trained for. Only supports SD 1.x (maybe 2.x) and SDXL."
-version = "0.8.1"
+version = "0.8.2"
 license = { file = "LICENSE" }
 
 [project.urls]
