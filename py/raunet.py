@@ -208,6 +208,22 @@ def forward_downsample(
         dtype=x.dtype,
         device=x.device,
     )
+
+    if (
+        model.op.__class__.__base__ is not None
+        and model.op.__class__.__base__.__name__.startswith("GGMLLayer")
+    ):
+        # Workaround for GGML quantized Downsample blocks.
+        if not hasattr(model.op, "get_weights"):
+            errstr = f"Cannot handle downsample block {block_index} which appears to be GGUF quantized but has no get_weights method!"
+            raise RuntimeError(errstr)
+        tempop.comfy_cast_weights = True
+        tempop.weight, tempop.bias = (
+            torch.nn.Parameter(p).to(device=x.device)
+            for p in model.op.get_weights(x.dtype)
+        )
+        return tempop(x)
+
     for k in FORWARD_DOWNSAMPLE_COPY_OP_KEYS:
         setattr(tempop, k, getattr(model.op, k))
     return tempop(x)
