@@ -34,7 +34,10 @@ def convert_time(
                 raise ValueError(
                     "invalid value for end percent",
                 )
-        return (ms.percent_to_sigma(start_time), ms.percent_to_sigma(end_time))
+        return (
+            round(ms.percent_to_sigma(start_time), 4),
+            round(ms.percent_to_sigma(end_time), 4),
+        )
     raise ValueError("invalid time mode")
 
 

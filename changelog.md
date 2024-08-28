@@ -2,6 +2,10 @@
 
 Note, only relatively significant changes to user-visible functionality will be included here. Most recent changes at the top.
 
+## 20240827
+
+* Fixed (hopefully) an issue with RAUNet model patching that could cause semi-non-deterministic output. Unfortunately the fix also may change seeds.
+
 ## 20240813
 
 _Note_: Advanced RAUNet node parameters changed, will break workflows.

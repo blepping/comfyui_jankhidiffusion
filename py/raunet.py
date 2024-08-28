@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from functools import partial
 from typing import TYPE_CHECKING
 
 import torch
@@ -19,8 +18,6 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from typing import Callable
-
     from comfy.model_patcher import ModelPatcher
 
 F = torch.nn.functional
@@ -46,6 +43,9 @@ class HDConfig:
         if not isinstance(topts, dict) or topts.get("block") not in self.use_blocks:
             return False
         return check_time(topts, self.start_sigma, self.end_sigma)
+
+    def __str__(self):
+        return f"<HDConfig: curr_sigma={self.curr_sigma}, start_sigma={self.start_sigma}, end_sigma={self.end_sigma}, use_blocks={self.use_blocks!r}, upscale_mode={self.upscale_mode}, two_stage_upscale_mode={self.two_stage_upscale_mode}>"
 
 
 GLOBAL_STATE: HDState
@@ -130,103 +130,123 @@ class HDState:
 GLOBAL_STATE = HDState()
 
 
-def forward_upsample(  # noqa: PLR0917
-    block_index: int,
-    model: object,
-    orig_forward: Callable,
-    hdconfig: HDConfig,
-    x: torch.Tensor,
-    output_shape: None | tuple = None,
-) -> torch.Tensor:
-    if (
-        model.dims == 3
-        or not model.use_conv
-        or not hdconfig.check({
-            "sigmas": hdconfig.curr_sigma,
-            "block": ("output", block_index),
-        })
-    ):
-        return orig_forward(x, output_shape=output_shape)
-
-    shape = (
-        output_shape[2:4]
-        if output_shape is not None
-        else (x.shape[2] * 4, x.shape[3] * 4)
+class HDForward:
+    FORWARD_DOWNSAMPLE_COPY_OP_KEYS = (
+        "comfy_cast_weights",
+        "weight_function",
+        "bias_function",
+        "weight",
+        "bias",
     )
-    if hdconfig.two_stage_upscale_mode != "disabled":
+
+    def __init__(
+        self,
+        orig_block: object,
+        hdconfig: HDConfig,
+        block_index: int,
+        is_up: bool,
+    ):
+        self.orig_block = orig_block
+        orig_forward = orig_block.forward
+        # This is weird but apparently when we patch the model, the previous object patches
+        # may still exist, so we have to make sure we get the _real_ original forward function.
+        while isinstance(orig_forward, HDForward):
+            orig_forward = orig_forward.orig_forward
+        self.orig_forward = orig_forward
+        self.hdconfig = hdconfig
+        self.block_index = block_index
+        self.forward = self.forward_upsample if is_up else self.forward_downsample
+
+    def __call__(self, *args: list, **kwargs: dict) -> torch.Tensor:
+        return self.forward(*args, **kwargs)
+
+    def forward_upsample(
+        self,
+        x: torch.Tensor,
+        output_shape: None | tuple = None,
+    ) -> torch.Tensor:
+        hdconfig = self.hdconfig
+        orig_block = self.orig_block
+        block_index = self.block_index
+        if (
+            orig_block.dims == 3
+            or not orig_block.use_conv
+            or not hdconfig.check({
+                "sigmas": hdconfig.curr_sigma,
+                "block": ("output", block_index),
+            })
+        ):
+            return self.orig_forward(x, output_shape=output_shape)
+
+        shape = (
+            output_shape[2:4]
+            if output_shape is not None
+            else (x.shape[2] * 4, x.shape[3] * 4)
+        )
+        if hdconfig.two_stage_upscale_mode != "disabled":
+            x = scale_samples(
+                x,
+                shape[1] // 2,
+                shape[0] // 2,
+                mode=hdconfig.two_stage_upscale_mode,
+                sigma=hdconfig.curr_sigma,
+            )
         x = scale_samples(
             x,
-            shape[1] // 2,
-            shape[0] // 2,
-            mode=hdconfig.two_stage_upscale_mode,
+            shape[1],
+            shape[0],
+            mode=hdconfig.upscale_mode,
             sigma=hdconfig.curr_sigma,
         )
-    x = scale_samples(
-        x,
-        shape[1],
-        shape[0],
-        mode=hdconfig.upscale_mode,
-        sigma=hdconfig.curr_sigma,
-    )
-    return model.conv(x)
+        return orig_block.conv(x)
 
+    def forward_downsample(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        hdconfig = self.hdconfig
+        orig_block = self.orig_block
+        block_index = self.block_index
+        if (
+            orig_block.dims == 3
+            or not orig_block.use_conv
+            or not hdconfig.check({
+                "sigmas": hdconfig.curr_sigma,
+                "block": ("input", block_index),
+            })
+        ):
+            return self.orig_forward(x)
 
-FORWARD_DOWNSAMPLE_COPY_OP_KEYS = (
-    "comfy_cast_weights",
-    "weight_function",
-    "bias_function",
-    "weight",
-    "bias",
-)
-
-
-def forward_downsample(
-    block_index: int,
-    model: object,
-    orig_forward: Callable,
-    hdconfig: HDConfig,
-    x: torch.Tensor,
-) -> torch.Tensor:
-    if (
-        model.dims == 3
-        or not model.use_conv
-        or not hdconfig.check({
-            "sigmas": hdconfig.curr_sigma,
-            "block": ("input", block_index),
-        })
-    ):
-        return orig_forward(x)
-
-    tempop = openaimodel.ops.conv_nd(
-        model.dims,
-        model.channels,
-        model.out_channels,
-        3,  # kernel size
-        stride=(4, 4),
-        padding=(2, 2),
-        dilation=(2, 2),
-        dtype=x.dtype,
-        device=x.device,
-    )
-
-    if (
-        model.op.__class__.__base__ is not None
-        and model.op.__class__.__base__.__name__.startswith("GGMLLayer")
-    ):
-        # Workaround for GGML quantized Downsample blocks.
-        if not hasattr(model.op, "get_weights"):
-            errstr = f"Cannot handle downsample block {block_index} which appears to be GGUF quantized but has no get_weights method!"
-            raise RuntimeError(errstr)
-        tempop.comfy_cast_weights = True
-        tempop.weight, tempop.bias = (
-            torch.nn.Parameter(p).to(device=x.device)
-            for p in model.op.get_weights(x.dtype)
+        tempop = openaimodel.ops.conv_nd(
+            orig_block.dims,
+            orig_block.channels,
+            orig_block.out_channels,
+            3,  # kernel size
+            stride=(4, 4),
+            padding=(2, 2),
+            dilation=(2, 2),
+            dtype=x.dtype,
+            device=x.device,
         )
-        return tempop(x)
 
-    for k in FORWARD_DOWNSAMPLE_COPY_OP_KEYS:
-        setattr(tempop, k, getattr(model.op, k))
-    return tempop(x)
+        if (
+            orig_block.op.__class__.__base__ is not None
+            and orig_block.op.__class__.__base__.__name__ == "GGMLLayer"
+        ):
+            # Workaround for GGML quantized Downsample blocks.
+            if not hasattr(orig_block.op, "get_weights"):
+                errstr = f"Cannot handle downsample block {block_index} which appears to be GGUF quantized but has no get_weights method!"
+                raise RuntimeError(errstr)
+            tempop.comfy_cast_weights = True
+            tempop.weight, tempop.bias = (
+                torch.nn.Parameter(p).to(device=x.device)
+                for p in orig_block.op.get_weights(x.dtype)
+            )
+            return tempop(x)
+
+        for k in self.FORWARD_DOWNSAMPLE_COPY_OP_KEYS:
+            setattr(tempop, k, getattr(orig_block.op, k))
+        return tempop(x)
 
 
 class ApplyRAUNet:
@@ -250,14 +270,14 @@ class ApplyRAUNet:
                     "STRING",
                     {
                         "default": "3",
-                        "tooltip": "Comma-separated list of input Downsample blocks. The default of 3 will work with SD1.x and SDXL.",
+                        "tooltip": "Comma-separated list of input Downsample blocks. Default is for SD 1.5. The corresponding valid block from output_blocks must be set along with input.\nValid blocks for SD1.5: 3, 6, 9\nValid blocks for SDXL: 3, 6",
                     },
                 ),
                 "output_blocks": (
                     "STRING",
                     {
                         "default": "8",
-                        "tooltip": "Comma-separated list of output Upsample blocks. The default is for SD1.x, for SDXL use 5.",
+                        "tooltip": "Comma-separated list of output Upsample blocks. Default is for SD 1.5. The corresponding valid block from input_blocks must be set along with output.\nValid blocks for SD1.5: 8, 5, 2\nValid blocks for SDXL: 5, 2",
                     },
                 ),
                 "time_mode": (
@@ -395,7 +415,6 @@ class ApplyRAUNet:
         ca_use_blocks |= parse_blocks("input", ca_input_blocks)
 
         model = model.clone()
-        model.unpatch_model(device_to=model.model.device)
         ms = model.get_model_object("model_sampling")
 
         ca_start_sigma, ca_end_sigma = convert_time(
@@ -471,10 +490,10 @@ class ApplyRAUNet:
             main_block = model.get_model_object(
                 f"diffusion_model.{block_type}_blocks.{block_index}",
             )
-            block_fun, expected_class = (
-                (forward_downsample, openaimodel.Downsample)
+            expected_class = (
+                openaimodel.Downsample
                 if block_type == "input"
-                else (forward_upsample, openaimodel.Upsample)
+                else openaimodel.Upsample
             )
             block_name = f"diffusion_model.{block_type}_blocks.{block_index}.{len(main_block) - 1}"
             block = model.get_model_object(block_name)
@@ -486,7 +505,7 @@ class ApplyRAUNet:
                 raise ValueError(error_message)  # noqa: TRY004
             model.add_object_patch(
                 f"{block_name}.forward",
-                partial(block_fun, block_index, block, block.forward, hdconfig),
+                HDForward(block, hdconfig, block_index, block_type != "input"),
             )
 
         GLOBAL_STATE.apply_patches()
