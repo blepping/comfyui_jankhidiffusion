@@ -270,14 +270,14 @@ class ApplyRAUNet:
                     "STRING",
                     {
                         "default": "3",
-                        "tooltip": "Comma-separated list of input Downsample blocks. Default is for SD 1.5. The corresponding valid block from output_blocks must be set along with input.\nValid blocks for SD1.5: 3, 6, 9\nValid blocks for SDXL: 3, 6",
+                        "tooltip": "Comma-separated list of input Downsample blocks. Default is for SD 1.5. The corresponding valid block from output_blocks must be set along with input.\nValid blocks for SD1.5: 3, 6, 9\nValid blocks for SDXL: 3, 6. Original Hidiffusion implementation uses 6 for SDXL.",
                     },
                 ),
                 "output_blocks": (
                     "STRING",
                     {
                         "default": "8",
-                        "tooltip": "Comma-separated list of output Upsample blocks. Default is for SD 1.5. The corresponding valid block from input_blocks must be set along with output.\nValid blocks for SD1.5: 8, 5, 2\nValid blocks for SDXL: 5, 2",
+                        "tooltip": "Comma-separated list of output Upsample blocks. Default is for SD 1.5. The corresponding valid block from input_blocks must be set along with output.\nValid blocks for SD1.5: 8, 5, 2\nValid blocks for SDXL: 5, 2. Original Hidiffusion implementation uses 2 for SDXL.",
                     },
                 ),
                 "time_mode": (
@@ -340,14 +340,14 @@ class ApplyRAUNet:
                     "STRING",
                     {
                         "default": "4",
-                        "tooltip": "Comma separated list of input cross-attention blocks. Default is for SD1.x, for SDXL you can try using 2 (or just disable it).",
+                        "tooltip": "Comma separated list of input cross-attention blocks. Default is for SD1.x, for SDXL you can try using 5 (or just disable it).",
                     },
                 ),
                 "ca_output_blocks": (
                     "STRING",
                     {
                         "default": "8",
-                        "tooltip": "Comma-separated list of output cross-attention blocks. Default is for SD1.x, for SDXL you can try using 7 (or just disable it).",
+                        "tooltip": "Comma-separated list of output cross-attention blocks. Default is for SD1.x, for SDXL you can try using 4 (or just disable it).",
                     },
                 ),
                 "ca_upscale_mode": (
@@ -450,6 +450,7 @@ class ApplyRAUNet:
                 return F.avg_pool2d(
                     h,
                     kernel_size=(int(ca_downscale_factor), int(ca_downscale_factor)),
+                    ceil_mode=True,
                 )
             return scale_samples(
                 h,

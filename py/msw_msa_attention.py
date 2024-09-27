@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, NamedTuple
 
 import torch
 
 from .utils import *
+
+F = torch.nn.functional
 
 if TYPE_CHECKING:
     import comfy
@@ -56,7 +59,7 @@ class ApplyMSWMSAAttention:
                     "STRING",
                     {
                         "default": "9,10,11",
-                        "tooltip": "Comma-separated list of output blocks to patch. Default is for SD1.x, you can try 5,4 for SDXL",
+                        "tooltip": "Comma-separated list of output blocks to patch. Default is for SD1.x, you can try 3,4,5 for SDXL",
                     },
                 ),
                 "time_mode": (
@@ -113,13 +116,15 @@ class ApplyMSWMSAAttention:
         batch, _features, channels = x.shape
         wheight, wwidth = window_size
         x = x.view(batch, height, width, channels)
+        if height % 2 != 0 or width % 2 != 0:
+            x = F.interpolate(x.permute(0, 3, 1, 2).contiguous(), size=(wheight * 2, wwidth * 2), mode="nearest-exact").permute(0, 2, 3, 1).contiguous()
         if shift_size.sum > 0:
             x = torch.roll(x, shifts=-shift_size, dims=(1, 2))
         x = x.view(
             batch,
-            height // wheight,
+            2,
             wheight,
-            width // wwidth,
+            2,
             wwidth,
             channels,
         )
@@ -141,13 +146,13 @@ class ApplyMSWMSAAttention:
         batch, _features, channels = windows.shape
         wheight, wwidth = window_size
         windows = windows.view(-1, wheight, wwidth, channels)
-        batch = int(
-            windows.shape[0] / (height * width / wheight / wwidth),
-        )
-        x = windows.view(batch, height // wheight, width // wwidth, wheight, wwidth, -1)
-        x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(batch, height, width, -1)
+        batch = int(windows.shape[0] / 4)
+        x = windows.view(batch, 2, 2, wheight, wwidth, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(batch, wheight * 2, wwidth * 2, -1)
         if shift_size.sum > 0:
             x = torch.roll(x, shifts=shift_size, dims=(1, 2))
+        if height % 2 != 0 or width % 2 != 0:
+            x = F.interpolate(x.permute(0, 3, 1, 2).contiguous(), size=(height, width), mode="nearest-exact").permute(0, 2, 3, 1).contiguous()
         return x.view(batch, height * width, channels)
 
     @staticmethod
@@ -159,14 +164,14 @@ class ApplyMSWMSAAttention:
         _batch, features, _channels = n.shape
         orig_height, orig_width = orig_shape[-2:]
 
-        downsample_ratio = int(
+        downsample_ratio = round(
             ((orig_height * orig_width) // features) ** 0.5,
         )
         height, width = (
-            orig_height // downsample_ratio,
-            orig_width // downsample_ratio,
+            math.ceil(orig_height / downsample_ratio),
+            math.ceil(orig_width / downsample_ratio),
         )
-        wheight, wwidth = height // 2, width // 2
+        wheight, wwidth = math.ceil(height / 2), math.ceil(width // 2)
 
         if shift == 0:
             shift_size = ShiftSize(0, 0)
@@ -229,26 +234,19 @@ class ApplyMSWMSAAttention:
                 cls.get_window_args(x, orig_shape, shift) if x is not None else None
                 for x in (q, k, v)
             )
-            try:
-                if q is not None and q is k and q is v:
-                    return (
-                        cls.window_partition(
-                            q,
-                            *window_args[0],
-                        ),
-                    ) * 3
-                return tuple(
-                    cls.window_partition(x, *window_args[idx])
-                    if x is not None
-                    else None
-                    for idx, x in enumerate((q, k, v))
-                )
-            except RuntimeError as exc:
-                logging.warning(
-                    f"** jankhidiffusion: MSW-MSA attention not applied: Incompatible model patches or bad resolution. Try using resolutions that are multiples of 32 or 64. Original exception: {exc}",
-                )
-                window_args = None
-                return q, k, v
+            if q is not None and q is k and q is v:
+                return (
+                    cls.window_partition(
+                        q,
+                        *window_args[0],
+                    ),
+                ) * 3
+            return tuple(
+                cls.window_partition(x, *window_args[idx])
+                if x is not None
+                else None
+                for idx, x in enumerate((q, k, v))
+            )
 
         def attn1_output_patch(n: torch.Tensor, extra_options: dict) -> torch.Tensor:
             nonlocal window_args
@@ -299,7 +297,7 @@ class ApplyMSWMSAAttentionSimple:
         if model_type == "SD15":
             blocks = ("1,2", "", "11,10,9")
         elif model_type == "SDXL":
-            blocks = ("4,5", "", "5,4")
+            blocks = ("4,5", "", "3,4,5")
         else:
             raise ValueError("Unknown model type")
         prettyblocks = " / ".join(b or "none" for b in blocks)
