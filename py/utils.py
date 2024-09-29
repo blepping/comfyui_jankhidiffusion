@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 
 import torch.nn.functional as torchf
 from comfy.utils import bislerp
@@ -59,6 +60,32 @@ def check_time(time_arg: dict | float, start_sigma: float, end_sigma: float) -> 
     return sigma <= start_sigma and sigma >= end_sigma
 
 
+# Naive and totally inaccurate way to factorize target_res into rescaled integer width/height
+def rescale_size(width: int, height: int, target_res: int):
+    def get_neighbors(num: float):
+        def f_c(a):
+            return (math.floor(a), math.ceil(a))
+
+        return {*f_c(num - 1), *f_c(num), *f_c(num + 1)}
+
+    scale = math.sqrt(height * width / target_res)
+    height_scaled, width_scaled = height / scale, width / scale
+    height_rounded = get_neighbors(height_scaled)
+    width_rounded = get_neighbors(width_scaled)
+
+    for w in width_rounded:
+        _h = target_res / w
+        if _h % 1 == 0:
+            return w, int(_h)
+    for h in height_rounded:
+        _w = target_res / h
+        if _w % 1 == 0:
+            return int(_w), h
+
+    msg = f"Can't rescale {width} and {height} to fit {target_res}"
+    raise ValueError(msg)
+
+
 try:
     bleh = importlib.import_module("custom_nodes.ComfyUI-bleh")
     bleh_latentutils = getattr(bleh.py, "latent_utils", None)
@@ -94,4 +121,5 @@ __all__ = (
     "get_sigma",
     "parse_blocks",
     "scale_samples",
+    "rescale_size",
 )

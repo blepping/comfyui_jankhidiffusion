@@ -164,14 +164,8 @@ class ApplyMSWMSAAttention:
         _batch, features, _channels = n.shape
         orig_height, orig_width = orig_shape[-2:]
 
-        downsample_ratio = round(
-            ((orig_height * orig_width) // features) ** 0.5,
-        )
-        height, width = (
-            math.ceil(orig_height / downsample_ratio),
-            math.ceil(orig_width / downsample_ratio),
-        )
-        wheight, wwidth = math.ceil(height / 2), math.ceil(width // 2)
+        width, height = rescale_size(orig_width, orig_height, features)
+        wheight, wwidth = math.ceil(height / 2), math.ceil(width / 2)
 
         if shift == 0:
             shift_size = ShiftSize(0, 0)
