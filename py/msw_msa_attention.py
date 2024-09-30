@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     import comfy
 
 
+MSW_MSA_UPSCALE_METHODS = ("disabled", "skip", *UPSCALE_METHODS)
+
+
 class WindowSize(NamedTuple):
     height: int
     width: int
@@ -94,6 +97,22 @@ class ApplyMSWMSAAttention:
                         "tooltip": "Time the MSW-MSA attention effect ends - value is inclusive.",
                     },
                 ),
+                "upscale_mode": (
+                    MSW_MSA_UPSCALE_METHODS,
+                    {
+                        "default": "nearest-exact",
+                        "tooltip": "Upscale mode used as a fallback only when image sizes are not multiples of 64. May decrease image quality a bit.\n"
+                        + "Use `disabled` to bypass the fallback (may result in error) or use `skip` to skip MSW MSA on incompatible image sizes.",
+                    },
+                ),
+                "downscale_mode": (
+                    MSW_MSA_UPSCALE_METHODS,
+                    {
+                        "default": "nearest-exact",
+                        "tooltip": "Downscale mode used as a fallback only when image sizes are not multiples of 64. May decrease image quality a bit.\n"
+                        + "Use `disabled` to bypass the fallback (may result in error) or use `skip` to skip MSW MSA on incompatible image sizes.",
+                    },
+                ),
                 "model": (
                     "MODEL",
                     {
@@ -108,16 +127,19 @@ class ApplyMSWMSAAttention:
     @staticmethod
     def window_partition(
         x: torch.Tensor,
+        upscale_mode: str,
         window_size: WindowSize,
         shift_size: ShiftSize,
         height: int,
         width: int,
     ) -> torch.Tensor:
+        if (height % 2 != 0 or width % 2 != 0) and upscale_mode == "skip":
+            return x
         batch, _features, channels = x.shape
         wheight, wwidth = window_size
         x = x.view(batch, height, width, channels)
-        if height % 2 != 0 or width % 2 != 0:
-            x = F.interpolate(x.permute(0, 3, 1, 2).contiguous(), size=(wheight * 2, wwidth * 2), mode="nearest-exact").permute(0, 2, 3, 1).contiguous()
+        if (height % 2 != 0 or width % 2 != 0) and upscale_mode != "disabled":
+            x = scale_samples(x.permute(0, 3, 1, 2).contiguous(), wwidth * 2, wheight * 2, mode=upscale_mode).permute(0, 2, 3, 1).contiguous()
         if shift_size.sum > 0:
             x = torch.roll(x, shifts=-shift_size, dims=(1, 2))
         x = x.view(
@@ -138,11 +160,14 @@ class ApplyMSWMSAAttention:
     @staticmethod
     def window_reverse(
         windows: torch.Tensor,
+        downscale_mode: str,
         window_size: WindowSize,
         shift_size: WindowSize,
         height: int,
         width: int,
     ) -> torch.Tensor:
+        if (height % 2 != 0 or width % 2 != 0) and downscale_mode == "skip":
+            return windows
         batch, _features, channels = windows.shape
         wheight, wwidth = window_size
         windows = windows.view(-1, wheight, wwidth, channels)
@@ -151,8 +176,8 @@ class ApplyMSWMSAAttention:
         x = x.permute(0, 1, 3, 2, 4, 5).contiguous().view(batch, wheight * 2, wwidth * 2, -1)
         if shift_size.sum > 0:
             x = torch.roll(x, shifts=shift_size, dims=(1, 2))
-        if height % 2 != 0 or width % 2 != 0:
-            x = F.interpolate(x.permute(0, 3, 1, 2).contiguous(), size=(height, width), mode="nearest-exact").permute(0, 2, 3, 1).contiguous()
+        if (height % 2 != 0 or width % 2 != 0) and downscale_mode != "disabled":
+            x = scale_samples(x.permute(0, 3, 1, 2).contiguous(), width, height, mode=downscale_mode).permute(0, 2, 3, 1).contiguous()
         return x.view(batch, height * width, channels)
 
     @staticmethod
@@ -188,6 +213,8 @@ class ApplyMSWMSAAttention:
         time_mode: str,
         start_time: float,
         end_time: float,
+        upscale_mode: str,
+        downscale_mode: str,
     ) -> tuple[comfy.model_patcher.ModelPatcher]:
         use_blocks = parse_blocks("input", input_blocks)
         use_blocks |= parse_blocks("middle", middle_blocks)
@@ -232,11 +259,12 @@ class ApplyMSWMSAAttention:
                 return (
                     cls.window_partition(
                         q,
+                        upscale_mode,
                         *window_args[0],
                     ),
                 ) * 3
             return tuple(
-                cls.window_partition(x, *window_args[idx])
+                cls.window_partition(x, upscale_mode, *window_args[idx])
                 if x is not None
                 else None
                 for idx, x in enumerate((q, k, v))
@@ -248,7 +276,7 @@ class ApplyMSWMSAAttention:
                 window_args = None
                 return n
             args, window_args = window_args[0], None
-            return cls.window_reverse(n, *args)
+            return cls.window_reverse(n, downscale_mode, *args)
 
         model.set_model_attn1_patch(attn1_patch)
         model.set_model_attn1_output_patch(attn1_output_patch)
@@ -306,6 +334,8 @@ class ApplyMSWMSAAttentionSimple:
             time_mode="percent",
             start_time=time_range[0],
             end_time=time_range[1],
+            upscale_mode="nearest-exact",
+            downscale_mode="nearest-exact",
         )
 
 
