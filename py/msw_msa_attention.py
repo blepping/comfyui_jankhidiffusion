@@ -104,6 +104,9 @@ class Config(NamedTuple):
     post_window_multiplier: float = 1.0
     pre_window_reverse_multiplier: float = 1.0
     post_window_reverse_multiplier: float = 1.0
+    force_apply_attn2: bool = False
+    rescale_search_tolerance: int = 1
+    verbose: bool = False
 
     @classmethod
     def build(
@@ -245,20 +248,6 @@ class ApplyMSWMSAAttention:
                         "tooltip": "Time the MSW-MSA attention effect ends - value is inclusive.",
                     },
                 ),
-                "scale_mode": (
-                    SCALE_METHODS,
-                    {
-                        "default": "nearest-exact",
-                        "tooltip": "Scale mode used as a fallback only when image sizes are not multiples of 64. May decrease image quality.\nUse `disabled` to bypass the fallback (may result in error) or `skip` to skip the model patch on incompatible image sizes.",
-                    },
-                ),
-                "reverse_scale_mode": (
-                    REVERSE_SCALE_METHODS,
-                    {
-                        "default": "nearest-exact",
-                        "tooltip": "Scale mode used as a fallback only when image sizes are not multiples of 64 and scale mode isn't set to `skip` or `disabled`. May decrease image quality.",
-                    },
-                ),
                 "model": (
                     "MODEL",
                     {
@@ -381,6 +370,7 @@ class ApplyMSWMSAAttention:
 
     @staticmethod
     def get_window_args(
+        config: Config,
         n: torch.Tensor,
         orig_shape: tuple,
         shift: int,
@@ -388,7 +378,16 @@ class ApplyMSWMSAAttention:
         _batch, features, _channels = n.shape
         orig_height, orig_width = orig_shape[-2:]
 
-        width, height = rescale_size(orig_width, orig_height, features)
+        width, height = rescale_size(
+            orig_width,
+            orig_height,
+            features,
+            tolerance=config.rescale_search_tolerance,
+        )
+        # if (height, width) != (orig_height, orig_width):
+        #     print(
+        #         f"\nRESC: features={features}, orig={(orig_height, orig_width)}, new={(height, width)}",
+        #     )
         wheight, wwidth = math.ceil(height / 2), math.ceil(width / 2)
 
         if shift == 0:
@@ -462,11 +461,15 @@ class ApplyMSWMSAAttention:
         )
         if not config.use_blocks:
             return (model,)
+        if config.verbose:
+            logging.info(
+                f"** jankhidiffusion: MSW-MSA Attention: Using config: {config}",
+            )
 
         model = model.clone()
         state = State(config)
 
-        def attn1_patch(
+        def attn_patch(
             q: torch.Tensor,
             k: torch.Tensor,
             v: torch.Tensor,
@@ -497,7 +500,9 @@ class ApplyMSWMSAAttention:
                 # get_window_args() can fail with ValueError in rescale_size() for some weird resolutions/aspect ratios
                 #  so we catch it here and skip MSW-MSA attention in that case.
                 state.window_args = tuple(
-                    cls.get_window_args(x, orig_shape, shift) if x is not None else None
+                    cls.get_window_args(config, x, orig_shape, shift)
+                    if x is not None
+                    else None
                     for x in (q, k, v)
                 )
                 attn_parts = (q,) if q is not None and q is k and q is v else (q, k, v)
@@ -515,7 +520,7 @@ class ApplyMSWMSAAttention:
                 return q, k, v
             return result * 3 if len(result) == 1 else result
 
-        def attn1_output_patch(n: torch.Tensor, extra_options: dict) -> torch.Tensor:
+        def attn_output_patch(n: torch.Tensor, extra_options: dict) -> torch.Tensor:
             if state.window_args is None or state.last_block != block_to_num(
                 *extra_options.get("block", ("missing", 0)),
             ):
@@ -525,8 +530,12 @@ class ApplyMSWMSAAttention:
             state.window_args = None
             return result
 
-        model.set_model_attn1_patch(attn1_patch)
-        model.set_model_attn1_output_patch(attn1_output_patch)
+        if not config.force_apply_attn2:
+            model.set_model_attn1_patch(attn_patch)
+            model.set_model_attn1_output_patch(attn_output_patch)
+        else:
+            model.set_model_attn2_patch(attn_patch)
+            model.set_model_attn2_output_patch(attn_output_patch)
         return (model,)
 
 

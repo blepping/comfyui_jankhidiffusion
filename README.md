@@ -200,6 +200,13 @@ Default parameter values:
 # the node here. For example:
 # time_mode: percent
 
+# Scale mode used as a fallback only when image sizes are not multiples of 64. May decrease image quality.
+# May also be set to "disabled" to disable the workaround or "skip" to skip MSW-MSA attention on incompatible sizes.
+scale_mode: nearest-exact
+
+# Scale mode used to reverse the scale_mode scaling.
+reverse_scale_mode: nearest-exact
+
 # One of global, block, both, ignore
 last_shift_mode: global
 
@@ -214,13 +221,28 @@ pre_window_multiplier: 1.0
 post_window_multiplier: 1.0
 pre_window_reverse_multiplier: 1.0
 post_window_reverse_multiplier: 1.0
+
+# Positive/negative distance to search for candidate rescales when dealing with incompatible
+# resolutions. Can possibly be used to brute force attn2 application (you can set it to something
+# absurd like 32).
+rescale_search_tolerance: 1
+
+# Not recommended. Forces applying the attention patch to attn2.
+force_apply_attn2: false
+
+# Enable extra logging output. (Currently only dumps the parameters.)
+verbose: false
 ```
 
-The last shift options are for trying to avoid choosing the same shift size consecutively. This may or may not actually be helpful.
 
+* `scale_mode`: Scale mode used as a fallback only when image sizes are not multiples of 64. May decrease image quality. Use `disabled` to bypass the fallback (may result in error) or `skip` to skip using MSW-MSA attention when the image size is incompatible. Any of the available scaling modes may be used here.
+* `reverse_scale_mode`: Scale mode used to reverse the scaling done by `scale_mode`. No effect when `scale_mode` is not being applied.
 * `last_shift_mode`: `global` - tracking is independent of blocks. `block` - remembers the last shift by block. `both` - avoids using the last shift both by block and globally. `ignore` - just uses whatever shift was randomly picked.
 * `last_shift_strategy`: Only has an effect when `last_shift_mode` is not `ignore`. There are four possible shift types. `decrement` - decrements the shift type. `increment` - increments the shift type. `retry` - keeps generating random shifts until it hits one not on the ignore list (changes seeds most significantly).
 * `pre_window_multipler` (etc): You can multiply the tensor before/after the window or window reverse operation. There's generally no difference between doing it before or after unless you're using weird upscale modes from [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh). I don't know why/when this would be useful, but it's there if you want to mess with it!
+* `force_apply_attn2`: Forces applying to attn2 rather than attn1. **Warning**: MSW-MSA attention was not made for `attn2` and the sizes are guaranteed to be incompatible and require scaling. Using it also doesn't seem to improve performance, there isn't much reason to enable this unless you're a weirdo like me and just like trying strange things.
+
+The last shift options are for trying to avoid choosing the same shift size consecutively. This may or may not actually be helpful.
 
 **Note**: Normal error checking generally doesn't apply to parameters set/overriden here. You are allowed to shoot yourself in the foot and will likely just get an exception if you enter the wrong type/an absurd value.
 
@@ -341,6 +363,9 @@ ca_pre_upscale_multiplier: 1.0
 ca_post_upscale_multiplier: 1.0
 ca_pre_downscale_multiplier: 1.0
 ca_post_downscale_multiplier: 1.0
+
+# Enable extra logging output. (Currently only dumps the parameters.)
+verbose: false
 ```
 
 * `ca_input_after_skip_mode`: When applying CA scaling, the effect will occur after the skip connection. This is the default for Kohya Deep Shrink and may produce less noisy results. **Note**: This changes the corresponding output block you need to set if not targeting a downscale block (i.e. ones you can target with the main RAUNet effect). It seems like you generally just subtract one. Example: Using SD15 and targeting input 4, you'd normally use output 8 - use output 7 instead.

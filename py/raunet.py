@@ -158,6 +158,7 @@ class Config:
     # Maximum fadeout, as a percentage of the total scale effect.
     ca_fadeout_cap: float = 0.0
     ca_latent_pixel_increment: int | float = 8
+    verbose: bool = False
     curr_sigma: None | float = None
 
     @classmethod
@@ -626,6 +627,8 @@ class ApplyRAUNet:
             raise ValueError(
                 "avg_pool2d downscale mode can only be used with integer downscale factors",
             )
+        if config.verbose:
+            logging.info(f"** jankhidiffusion: RAUNet: Using config: {config}")
         have_ca_output_blocks = any(bt == "output" for (bt, _) in config.ca_use_blocks)
 
         model = model.clone()

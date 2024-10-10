@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import itertools
 import math
 from enum import StrEnum
 from typing import Sequence
@@ -92,27 +93,43 @@ def block_to_num(block_type: str, block_id: int) -> tuple[int, int]:
 
 
 # Naive and totally inaccurate way to factorize target_res into rescaled integer width/height
-def rescale_size(width: int, height: int, target_res: int) -> tuple[int, int]:
-    def get_neighbors(num: float) -> set:
-        def f_c(a: float) -> tuple[int, int]:
-            return (math.floor(a), math.ceil(a))
+def rescale_size(
+    width: int,
+    height: int,
+    target_res: int,
+    *,
+    tolerance=1,
+) -> tuple[int, int]:
+    tolerance = min(target_res, tolerance)
 
-        return {*f_c(num - 1), *f_c(num), *f_c(num + 1)}
+    def get_neighbors(num: float):
+        if num < 1:
+            return None
+        numi = int(num)
+        return tuple(
+            numi + adj
+            for adj in sorted(
+                range(
+                    -min(numi - 1, tolerance),
+                    tolerance + 1 + math.ceil(num - numi),
+                ),
+                key=abs,
+            )
+        )
 
     scale = math.sqrt(height * width / target_res)
     height_scaled, width_scaled = height / scale, width / scale
     height_rounded = get_neighbors(height_scaled)
     width_rounded = get_neighbors(width_scaled)
-
-    for w in width_rounded:
-        h_ = target_res / w
-        if h_ % 1 == 0:
-            return w, int(h_)
-    for h in height_rounded:
-        w_ = target_res / h
-        if w_ % 1 == 0:
-            return int(w_), h
-
+    for h, w in itertools.zip_longest(height_rounded, width_rounded):
+        h_adj = target_res / w if w is not None else 0.1
+        if h_adj % 1 == 0:
+            return (w, int(h_adj))
+        if h is None:
+            continue
+        w_adj = target_res / h
+        if w_adj % 1 == 0:
+            return (int(w_adj), h)
     msg = f"Can't rescale {width} and {height} to fit {target_res}"
     raise ValueError(msg)
 
