@@ -187,6 +187,45 @@ of 32, 64 or 128 (may need to experiment). Known to work with ELLA, FreeU (V2), 
 Input blocks downscale and output blocks upscale so the biggest effect on performance will be applying this
 to input blocks with a low block number and output blocks with a high block number.
 
+<details>
+
+<summary>YAML parameters</summary>
+
+This input can be converted to a multi-line text widget. Allows setting advanced/rare parameters. You can also override the node parameters here. JSON is valid YAML so you can use that if you prefer.
+
+Default parameter values:
+
+```yaml
+# In addition to the extra advanced options, you can override any fields from
+# the node here. For example:
+# time_mode: percent
+
+# One of global, block, both, ignore
+last_shift_mode: global
+
+# One of decrement, increment, retry
+last_shift_strategy: decrement
+
+# Can be enabled to disable the log warning about incompatible image sizes.
+silent: false
+
+# Allow scaling the window before/after the window or window reverse operation.
+pre_window_multiplier: 1.0
+post_window_multiplier: 1.0
+pre_window_reverse_multiplier: 1.0
+post_window_reverse_multiplier: 1.0
+```
+
+The last shift options are for trying to avoid choosing the same shift size consecutively. This may or may not actually be helpful.
+
+* `last_shift_mode`: `global` - tracking is independent of blocks. `block` - remembers the last shift by block. `both` - avoids using the last shift both by block and globally. `ignore` - just uses whatever shift was randomly picked.
+* `last_shift_strategy`: Only has an effect when `last_shift_mode` is not `ignore`. There are four possible shift types. `decrement` - decrements the shift type. `increment` - increments the shift type. `retry` - keeps generating random shifts until it hits one not on the ignore list (changes seeds most significantly).
+* `pre_window_multipler` (etc): You can multiply the tensor before/after the window or window reverse operation. There's generally no difference between doing it before or after unless you're using weird upscale modes from [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh). I don't know why/when this would be useful, but it's there if you want to mess with it!
+
+**Note**: Normal error checking generally doesn't apply to parameters set/overriden here. You are allowed to shoot yourself in the foot and will likely just get an exception if you enter the wrong type/an absurd value.
+
+</details>
+
 ### `ApplyRAUNet`
 
 **Use case**: Helps avoid artifacts when generating at resolutions significantly higher than what the model
@@ -257,6 +296,62 @@ probably work best if you don't want to manually set segments.
 *Compatibility note*: Should be compatibile with the same effects as MSW-MSA attention. Likely won't work with
 other scaling effects that target the same blocks (i.e. Deep Shrink). By itself, I think it should be fine with
 HyperTile and Deep Cache though I haven't actually tested that. May not work properly with ControlNet.
+
+<details>
+
+<summary>YAML parameters</summary>
+
+This input can be converted to a multi-line text widget. Allows setting advanced/rare parameters. You can also override the node parameters here. JSON is valid YAML so you can use that if you prefer.
+
+Default parameter values:
+
+```yaml
+# In addition to the extra advanced options, you can override any fields from
+# the node here. For example:
+# time_mode: percent
+
+# Patches input blocks after the skip connection when enabled (similar to Kohya deep shrink).
+ca_input_after_skip_mode: false
+
+# Either null or set to a time (with the same time mode as the other times).
+# Starts fading out the CA scaling effect, starting from the specified time.
+ca_fadeout_start_time: null
+
+# Maximum fadeout, specified as a percentage of the total scaling effect.
+ca_fadeout_cap: 0.0
+
+# null or float. Allows setting the width scale separately. When null the same
+# factor will be used for height and width.
+ca_downscale_factor_w: null
+
+# When applying CA scaling, ensures the rescaled latent is divisible by the specified incremenrt.
+ca_latent_pixel_increment: 8
+
+# When using the avg_pool2d method, enable ceil mode.
+# See: https://pytorch.org/docs/stable/generated/torch.nn.functional.avg_pool2d.html
+ca_avg_pool2d_ceil_mode: true
+
+# Allows applying a multiplier to the tensor: can be set separately for before/after upscale, downscale
+# and whether it's CA or not.
+pre_upscale_multiplier: 1.0
+post_upscale_multiplier: 1.0
+pre_downscale_multiplier: 1.0
+post_downscale_multiplier: 1.0
+ca_pre_upscale_multiplier: 1.0
+ca_post_upscale_multiplier: 1.0
+ca_pre_downscale_multiplier: 1.0
+ca_post_downscale_multiplier: 1.0
+```
+
+* `ca_input_after_skip_mode`: When applying CA scaling, the effect will occur after the skip connection. This is the default for Kohya Deep Shrink and may produce less noisy results. **Note**: This changes the corresponding output block you need to set if not targeting a downscale block (i.e. ones you can target with the main RAUNet effect). It seems like you generally just subtract one. Example: Using SD15 and targeting input 4, you'd normally use output 8 - use output 7 instead.
+* `ca_latent_pixel_increment`: Ensures the scaled sizes are a multiple of the latent pixel increment. The default of 8 should ensure the scaled size is compatible with MSW-MSA attention without scaling workarounds. *Note*: Has no effect when downscaling with `avg_pool2d`.
+* `ca_fadeout_start_time`: Will start fading out the CA downscale factor starting from the specified time (which uses the same time mode as other configured times). The fadeout occurs such that the downscale factor will reach `1.0` (no downscaling) at `ca_end_time`. This can (sometimes) help decrease artifacts compared to simply ending the scale effect abruptly.
+* `ca_fadeout_cap`: Only has an effect when fadeout is in effect (see above). This is expressed as a percentage of the scaling effect, so, for example, you could set it to `0.5` to fade out the first 50% of the downscale effect and after that the downscale would stay at 50% (of the total downscale effect) until `ca_end_time` is reached.
+* `pre_upscale_multipler` (etc): You can multiply the tensor before/after it's upscaled or downscaled. There's generally no difference between doing it before or after unless you're using weird upscale modes from [ComfyUI-bleh](https://github.com/blepping/ComfyUI-bleh). Should you multiply it? Maybe not! It's a setting to possibly mess with and (not very scientifically) it seems like applying a mild positive multiplier can help.
+
+**Note**: Normal error checking generally doesn't apply to parameters set/overriden here. You are allowed to shoot yourself in the foot and will likely just get an exception if you enter the wrong type/an absurd value.
+
+</details>
 
 ## Credits
 
