@@ -230,8 +230,8 @@ rescale_search_tolerance: 1
 # Not recommended. Forces applying the attention patch to attn2.
 force_apply_attn2: false
 
-# Enable extra logging output. (Currently only dumps the parameters.)
-verbose: false
+# Logging verbosity level. 1 - Dumps config at startup. 2 - Warnings are also no longer throttled.
+verbose: 0
 ```
 
 
@@ -364,8 +364,8 @@ ca_post_upscale_multiplier: 1.0
 ca_pre_downscale_multiplier: 1.0
 ca_post_downscale_multiplier: 1.0
 
-# Enable extra logging output. (Currently only dumps the parameters.)
-verbose: false
+# Logging verbosity level. 1 - Dumps configuration on startup.
+verbose: 0
 ```
 
 * `ca_input_after_skip_mode`: When applying CA scaling, the effect will occur after the skip connection. This is the default for Kohya Deep Shrink and may produce less noisy results. **Note**: This changes the corresponding output block you need to set if not targeting a downscale block (i.e. ones you can target with the main RAUNet effect). It seems like you generally just subtract one. Example: Using SD15 and targeting input 4, you'd normally use output 8 - use output 7 instead.

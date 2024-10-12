@@ -158,7 +158,7 @@ class Config:
     # Maximum fadeout, as a percentage of the total scale effect.
     ca_fadeout_cap: float = 0.0
     ca_latent_pixel_increment: int | float = 8
-    verbose: bool = False
+    verbose: int = 0
     curr_sigma: None | float = None
 
     @classmethod
@@ -168,7 +168,7 @@ class Config:
         *,
         input_blocks: str | list[int],
         output_blocks: str | list[int],
-        time_mode: str,
+        time_mode: str | TimeMode,
         start_time: float,
         end_time: float,
         ca_start_time: float,
@@ -178,6 +178,7 @@ class Config:
         ca_fadeout_start_time: None | float = None,
         **kwargs: dict,
     ) -> object:
+        time_mode: TimeMode = TimeMode(time_mode)
         start_sigma, end_sigma = convert_time(ms, time_mode, start_time, end_time)
         ca_start_sigma, ca_end_sigma = convert_time(
             ms,
@@ -482,8 +483,9 @@ class ApplyRAUNet:
                     },
                 ),
                 "time_mode": (
-                    ("percent", "timestep", "sigma"),
+                    tuple(str(val) for val in TimeMode),
                     {
+                        "default": "percent",
                         "tooltip": "Time mode controls how to interpret the values in start_time and end_time.",
                     },
                 ),
@@ -873,7 +875,7 @@ class ApplyRAUNetSimple:
         cls,
         *,
         model: ModelPatcher,
-        model_type: str,
+        model_type: str | ModelType,
         res_mode: str,
         upscale_mode: str,
         ca_upscale_mode: str,
@@ -887,15 +889,17 @@ class ApplyRAUNetSimple:
         if ca_upscale_mode == "default":
             ca_upscale_mode = "bicubic"
         res = res_mode.split(" ", 1)[0]
-        preset = SIMPLE_PRESETS.get(f"{model_type}_{res}")
+        preset_key = f"{model_type!s}_{res}"
+        preset = SIMPLE_PRESETS.get(preset_key)
         if preset is None:
-            raise ValueError("Unsupported model_type/res_mode combination")
+            errstr = f"Unsupported model_type/res_mode combination {preset_key}"
+            raise ValueError(errstr)
         preset = preset.edited(
             upscale_mode=upscale_mode,
             ca_upscale_mode=ca_upscale_mode,
         )
         logging.info(
-            f"** ApplyRAUNetSimple: Using preset {model_type} {res}: upscale {upscale_mode}, in/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}  |  CA upscale {preset.ca_upscale_mode},  CA in/out blocks [{preset.ca_pretty_blocks}], CA start/end percent {preset.ca_start_time:.2}/{preset.ca_end_time:.2}",
+            f"** ApplyRAUNetSimple: Using preset {model_type!s} {res}: upscale {upscale_mode}, in/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}  |  CA upscale {preset.ca_upscale_mode},  CA in/out blocks [{preset.ca_pretty_blocks}], CA start/end percent {preset.ca_start_time:.2}/{preset.ca_end_time:.2}",
         )
         return ApplyRAUNet.patch(model=model, **preset.as_dict)
 

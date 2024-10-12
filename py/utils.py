@@ -3,12 +3,26 @@ from __future__ import annotations
 import importlib
 import itertools
 import math
-from enum import StrEnum
 from typing import Sequence
 
 import torch.nn.functional as torchf
 from comfy import latent_formats
 from comfy.utils import bislerp
+
+try:
+    from enum import StrEnum
+except ImportError:
+    # Compatibility workaround for pre-3.11 Python versions.
+    from enum import Enum
+
+    class StrEnum(str, Enum):
+        @staticmethod
+        def _generate_next_value_(name: str, *_unused: list) -> str:
+            return name.lower()
+
+        def __str__(self) -> str:
+            return str(self.value)
+
 
 UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "nearest", "area")
 

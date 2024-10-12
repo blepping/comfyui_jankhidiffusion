@@ -3,7 +3,6 @@ from __future__ import annotations
 import itertools
 import logging
 import math
-from enum import StrEnum
 from time import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -11,6 +10,9 @@ import torch
 
 from .utils import (
     UPSCALE_METHODS,
+    ModelType,
+    StrEnum,
+    TimeMode,
     block_to_num,
     check_time,
     convert_time,
@@ -36,7 +38,7 @@ class Preset(NamedTuple):
     input_blocks: str = ""
     middle_blocks: str = ""
     output_blocks: str = ""
-    time_mode: str = "percent"
+    time_mode: TimeMode = TimeMode.PERCENT
     start_time: float = 0.2
     end_time: float = 1.0
     scale_mode: str = "nearest-exact"
@@ -53,8 +55,8 @@ class Preset(NamedTuple):
 
 
 SIMPLE_PRESETS = {
-    "SD15": Preset(input_blocks="1,2", output_blocks="11,10,9"),
-    "SDXL": Preset(input_blocks="4,5", output_blocks="3,4,5"),
+    ModelType.SD15: Preset(input_blocks="1,2", output_blocks="11,10,9"),
+    ModelType.SDXL: Preset(input_blocks="4,5", output_blocks="3,4,5"),
 }
 
 
@@ -106,7 +108,7 @@ class Config(NamedTuple):
     post_window_reverse_multiplier: float = 1.0
     force_apply_attn2: bool = False
     rescale_search_tolerance: int = 1
-    verbose: bool = False
+    verbose: int = 0
 
     @classmethod
     def build(
@@ -116,11 +118,12 @@ class Config(NamedTuple):
         input_blocks: str | list[int],
         middle_blocks: str | list[int],
         output_blocks: str | list[int],
-        time_mode: str,
+        time_mode: str | TimeMode,
         start_time: float,
         end_time: float,
         **kwargs: dict,
     ) -> object:
+        time_mode: TimeMode = TimeMode(time_mode)
         start_sigma, end_sigma = convert_time(ms, time_mode, start_time, end_time)
         input_blocks, middle_blocks, output_blocks = itertools.starmap(
             parse_blocks,
@@ -176,12 +179,18 @@ class State:
         if self.config.silent:
             return
         now = time()
-        if self.last_warned is None or now - self.last_warned >= DEFAULT_WARN_INTERVAL:
-            logging.warning(f"** jankhidiffusion: MSW-MSA attention: {s}")
+        if (
+            self.config.verbose >= 2
+            or self.last_warned is None
+            or now - self.last_warned >= DEFAULT_WARN_INTERVAL
+        ):
+            logging.warning(
+                f"** jankhidiffusion: MSW-MSA attention({self.last_block}): {s}",
+            )
             self.last_warned = now
 
     def __repr__(self):
-        return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.last_block}, last_shift={self.last_shift}>"
+        return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.last_block}, last_shift={self.last_shift}, last_shifts={self.last_shifts}>"
 
 
 class ApplyMSWMSAAttention:
@@ -217,12 +226,9 @@ class ApplyMSWMSAAttention:
                     },
                 ),
                 "time_mode": (
-                    (
-                        "percent",
-                        "timestep",
-                        "sigma",
-                    ),
+                    tuple(str(val) for val in TimeMode),
                     {
+                        "default": "percent",
                         "tooltip": "Time mode controls how to interpret the values in start_time and end_time.",
                     },
                 ),
@@ -568,18 +574,22 @@ class ApplyMSWMSAAttentionSimple:
     @classmethod
     def go(
         cls,
-        model_type: str,
+        model_type: str | ModelType,
         model: comfy.model_patcher.ModelPatcher,
     ) -> tuple[comfy.model_patcher.ModelPatcher]:
         if model_type == "auto":
-            model_type = guess_model_type(model)
-            if model_type not in SIMPLE_PRESETS:
+            guessed_model_type = guess_model_type(model)
+            if guessed_model_type not in SIMPLE_PRESETS:
                 raise RuntimeError("Unable to guess model type")
+            model_type = guessed_model_type
+        else:
+            model_type = ModelType(model_type)
         preset = SIMPLE_PRESETS.get(model_type)
         if preset is None:
-            raise ValueError("Unknown model type")
+            errstr = f"Unknown model type {model_type!s}"
+            raise ValueError(errstr)
         logging.info(
-            f"** ApplyMSWMSAAttentionSimple: Using preset {model_type}: in/mid/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}",
+            f"** ApplyMSWMSAAttentionSimple: Using preset {model_type!s}: in/mid/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}",
         )
         return ApplyMSWMSAAttention.patch(model=model, **preset.as_dict)
 
