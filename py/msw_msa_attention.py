@@ -175,6 +175,15 @@ class State:
         self.last_shift = None
         self.last_shifts = {}
 
+    @property
+    def pretty_last_block(self) -> str:
+        if self.last_block is None:
+            return "unknown"
+        bt, bnum = self.last_block
+        attstr = "" if not self.config.force_apply_attn2 else "attn2."
+        btstr = ("in", "mid", "out")[bt]
+        return f"{attstr}{btstr}.{bnum}"
+
     def maybe_warning(self, s):
         if self.config.silent:
             return
@@ -185,12 +194,12 @@ class State:
             or now - self.last_warned >= DEFAULT_WARN_INTERVAL
         ):
             logging.warning(
-                f"** jankhidiffusion: MSW-MSA attention({self.last_block}): {s}",
+                f"** jankhidiffusion: MSW-MSA attention({self.pretty_last_block}): {s}",
             )
             self.last_warned = now
 
     def __repr__(self):
-        return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.last_block}, last_shift={self.last_shift}, last_shifts={self.last_shifts}>"
+        return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.pretty_last_block}, last_shift={self.last_shift}, last_shifts={self.last_shifts}>"
 
 
 class ApplyMSWMSAAttention:
