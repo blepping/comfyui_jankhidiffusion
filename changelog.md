@@ -2,7 +2,7 @@
 
 Note, only relatively significant changes to user-visible functionality will be included here. Most recent changes at the top.
 
-## 20241010
+## 20241014
 
 _Note_: Advanced MSW-MSA Attention node parameters changed. May break workflows.
 
@@ -16,6 +16,8 @@ _Note_: This update may slightly change seeds.
 * You can now use a different scale factor for width and height in RAUNet CA scaling. See `ca_downscale_factor_w` in YAML parameters.
 * You can now fade out the CA scaling effect in RAUNet node. See `ca_fadeout_start_time` and `ca_fadeout_cap` in YAML parameters.
 * Simple nodes default parameters for SDXL models adjusted to match the official HiDiffusion ones more closely.
+
+Check the expandable "YAML Parameters" sections in the main README for more information about advanced parameters added in this update.
 
 ## 20240827
 
