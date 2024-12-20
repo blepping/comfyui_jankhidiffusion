@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import itertools
-import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -10,8 +9,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import torch
 from comfy.ldm.modules.diffusionmodules import openaimodel
 
+from . import utils
 from .utils import (
-    UPSCALE_METHODS,
+    MODULES,
     ModelType,
     TimeMode,
     check_time,
@@ -19,6 +19,7 @@ from .utils import (
     fade_scale,
     get_sigma,
     guess_model_type,
+    logger,
     parse_blocks,
     scale_samples,
     sigma_to_pct,
@@ -29,11 +30,20 @@ if TYPE_CHECKING:
 
 F = torch.nn.functional
 
-CA_DOWNSCALE_METHODS = (
-    ("avg_pool2d", "adaptive_avg_pool2d", *UPSCALE_METHODS)
-    if "adaptive_avg_pool2d" not in UPSCALE_METHODS
-    else ("avg_pool2d", *UPSCALE_METHODS)
-)
+CA_DOWNSCALE_METHODS = ()
+
+
+def init_integrations():
+    global scale_samples, CA_DOWNSCALE_METHODS  # noqa: PLW0603
+    CA_DOWNSCALE_METHODS = (
+        ("avg_pool2d", "adaptive_avg_pool2d", *utils.UPSCALE_METHODS)
+        if "adaptive_avg_pool2d" not in utils.UPSCALE_METHODS
+        else ("avg_pool2d", *utils.UPSCALE_METHODS)
+    )
+    scale_samples = utils.scale_samples
+
+
+utils.MODULES.register_init_handler(init_integrations)
 
 
 class Preset(NamedTuple):
@@ -138,7 +148,7 @@ class Config:
     ca_upscale_mode: str = "bicubic"
     ca_downscale_mode: str = "adaptive_avg_pool2d"
     ca_downscale_factor: float = 2.0
-    ca_downscale_factor_w: None | float = None
+    ca_downscale_factor_w: float | None = None
     # Patches the input  block after the skip connection.
     ca_input_after_skip_mode: bool = False
     ca_avg_pool2d_ceil_mode: bool = True
@@ -154,12 +164,12 @@ class Config:
     ca_pre_downscale_multiplier: float = 1.0
     ca_post_downscale_multiplier: float = 1.0
     # Allows fading out the scale effect starting from this time.
-    ca_fadeout_start_sigma: None | float = None
+    ca_fadeout_start_sigma: float | None = None
     # Maximum fadeout, as a percentage of the total scale effect.
     ca_fadeout_cap: float = 0.0
     ca_latent_pixel_increment: int | float = 8
     verbose: int = 0
-    curr_sigma: None | float = None
+    curr_sigma: float | None = None
 
     @classmethod
     def build(
@@ -175,7 +185,7 @@ class Config:
         ca_end_time: float,
         ca_input_blocks: str | list[int],
         ca_output_blocks: str | list[int],
-        ca_fadeout_start_time: None | float = None,
+        ca_fadeout_start_time: float | None = None,
         **kwargs: dict,
     ) -> object:
         time_mode: TimeMode = TimeMode(time_mode)
@@ -254,7 +264,7 @@ class State:
     def hd_apply_control(
         self,
         h: torch.Tensor,
-        control: None | dict,
+        control: dict | None,
         name: str,
     ) -> torch.Tensor:
         ctrls = control.get(name) if control is not None else None
@@ -264,7 +274,7 @@ class State:
         if ctrl is None:
             return h
         if ctrl.shape[-2:] != h.shape[-2:]:
-            logging.info(
+            logger.info(
                 f"* jankhidiffusion: Scaling controlnet conditioning: {ctrl.shape[-2:]} -> {h.shape[-2:]}",
             )
             ctrl = F.interpolate(ctrl, size=h.shape[-2:], **self.controlnet_scale_args)
@@ -279,7 +289,7 @@ class State:
             return
         self.orig_apply_control = openaimodel.apply_control
         openaimodel.apply_control = self.hd_apply_control
-        logging.info("** jankhidiffusion: Patched openaimodel.apply_control")
+        logger.info("** jankhidiffusion: Patched openaimodel.apply_control")
 
     # Try to be compatible with FreeU Advanced.
     def try_patch_freeu_advanced(self) -> None:
@@ -294,7 +304,7 @@ class State:
 
         self.orig_fua_apply_control = fua_nodes.apply_control
         fua_nodes.apply_control = self.hd_apply_control
-        logging.info("** jankhidiffusion: Patched FreeU_Advanced")
+        logger.info("** jankhidiffusion: Patched FreeU_Advanced")
 
     def apply_patches(self) -> None:
         self.try_patch_apply_control()
@@ -303,18 +313,18 @@ class State:
     def revert_patches(self) -> None:
         if openaimodel.apply_control == self.hd_apply_control:
             openaimodel.apply_control = self.orig_apply_control
-            logging.info("** jankhidiffusion: Reverted openaimodel.apply_control patch")
+            logger.info("** jankhidiffusion: Reverted openaimodel.apply_control patch")
         if not self.patched_freeu_advanced:
             return
         fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
         if not fua_nodes:
-            logging.warning(
+            logger.warning(
                 "** jankhidiffusion: Unexpectedly could not revert FreeU_Advanced patches",
             )
             return
         fua_nodes.apply_control = self.orig_fua_apply_control
         self.patched_freeu_advanced = False
-        logging.info("** jankhidiffusion: Reverted FreeU_Advanced patch")
+        logger.info("** jankhidiffusion: Reverted FreeU_Advanced patch")
 
 
 GLOBAL_STATE: State = State()
@@ -353,7 +363,7 @@ class HDForward:
     def forward_upsample(
         self,
         x: torch.Tensor,
-        output_shape: None | tuple = None,
+        output_shape: tuple | None = None,
     ) -> torch.Tensor:
         config = self.config
         orig_block = self.orig_block
@@ -460,6 +470,7 @@ class ApplyRAUNet:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        MODULES.initialize()
         return {
             "required": {
                 "model": (
@@ -512,7 +523,7 @@ class ApplyRAUNet:
                     },
                 ),
                 "upscale_mode": (
-                    UPSCALE_METHODS,
+                    utils.UPSCALE_METHODS,
                     {
                         "tooltip": "Method used when upscaling latents in output Upscale blocks.",
                     },
@@ -554,7 +565,7 @@ class ApplyRAUNet:
                     },
                 ),
                 "ca_upscale_mode": (
-                    UPSCALE_METHODS,
+                    utils.UPSCALE_METHODS,
                     {
                         "tooltip": "Mode used when upscaling latents in output cross-attention blocks.",
                     },
@@ -577,7 +588,7 @@ class ApplyRAUNet:
                     },
                 ),
                 "two_stage_upscale_mode": (
-                    ("disabled", *UPSCALE_METHODS),
+                    ("disabled", *utils.UPSCALE_METHODS),
                     {
                         "default": "disabled",
                         "tooltip": "When upscaling in output Upscale blocks (non-NA), do half the upscale with this mode and half with the normal upscale mode. May produce a different effect, isn't necessarily better.",
@@ -602,7 +613,7 @@ class ApplyRAUNet:
         cls,
         *,
         model: ModelPatcher,
-        yaml_parameters: None | str = None,
+        yaml_parameters: str | None = None,
         **kwargs: dict[str, Any],
     ) -> tuple[ModelPatcher]:
         if yaml_parameters:
@@ -630,7 +641,7 @@ class ApplyRAUNet:
                 "avg_pool2d downscale mode can only be used with integer downscale factors",
             )
         if config.verbose:
-            logging.info(f"** jankhidiffusion: RAUNet: Using config: {config}")
+            logger.info(f"** jankhidiffusion: RAUNet: Using config: {config}")
         have_ca_output_blocks = any(bt == "output" for (bt, _) in config.ca_use_blocks)
 
         model = model.clone()
@@ -825,6 +836,7 @@ class ApplyRAUNetSimple:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
+        MODULES.initialize()
         return {
             "required": {
                 "model": (
@@ -852,7 +864,7 @@ class ApplyRAUNetSimple:
                 "upscale_mode": (
                     (
                         "default",
-                        *UPSCALE_METHODS,
+                        *utils.UPSCALE_METHODS,
                     ),
                     {
                         "tooltip": "Method used when upscaling latents in output Upsample blocks.",
@@ -861,7 +873,7 @@ class ApplyRAUNetSimple:
                 "ca_upscale_mode": (
                     (
                         "default",
-                        *UPSCALE_METHODS,
+                        *utils.UPSCALE_METHODS,
                     ),
                     {
                         "tooltip": "Method used when upscaling latents in cross attention blocks.",
@@ -898,7 +910,7 @@ class ApplyRAUNetSimple:
             upscale_mode=upscale_mode,
             ca_upscale_mode=ca_upscale_mode,
         )
-        logging.info(
+        logger.info(
             f"** ApplyRAUNetSimple: Using preset {model_type!s} {res}: upscale {upscale_mode}, in/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}  |  CA upscale {preset.ca_upscale_mode},  CA in/out blocks [{preset.ca_pretty_blocks}], CA start/end percent {preset.ca_start_time:.2}/{preset.ca_end_time:.2}",
         )
         return ApplyRAUNet.patch(model=model, **preset.as_dict)

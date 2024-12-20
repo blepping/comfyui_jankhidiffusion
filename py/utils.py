@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
 import itertools
+import logging
 import math
-from typing import Sequence
+import sys
+from typing import TYPE_CHECKING
 
 import torch.nn.functional as torchf
 from comfy import latent_formats
 from comfy.utils import bislerp
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 try:
     from enum import StrEnum
@@ -23,6 +29,8 @@ except ImportError:
         def __str__(self) -> str:
             return str(self.value)
 
+
+logger = logging.getLogger(__name__)
 
 UPSCALE_METHODS = ("bicubic", "bislerp", "bilinear", "nearest-exact", "nearest", "area")
 
@@ -77,7 +85,7 @@ def convert_time(
     raise ValueError("invalid time mode")
 
 
-def get_sigma(options: dict, key: str = "sigmas") -> None | float:
+def get_sigma(options: dict, key: str = "sigmas") -> float | None:
     if not isinstance(options, dict):
         return None
     sigmas = options.get(key)
@@ -148,7 +156,7 @@ def rescale_size(
     raise ValueError(msg)
 
 
-def guess_model_type(model: object) -> None | ModelType:
+def guess_model_type(model: object) -> ModelType | None:
     latent_format = model.get_model_object("latent_format")
     if isinstance(latent_format, latent_formats.SD15):
         return ModelType.SD15
@@ -179,33 +187,94 @@ def fade_scale(
     return max(fade_cap, scaling_pct)
 
 
-try:
-    bleh = importlib.import_module("custom_nodes.ComfyUI-bleh")
-    bleh_latentutils = getattr(bleh.py, "latent_utils", None)
+def get_custom_node(name):
+    module_key = f"custom_nodes.{name}"
+    try:
+        spec = importlib.util.find_spec(module_key)
+        if spec is None:
+            raise ModuleNotFoundError(module_key)
+        module = next(
+            v
+            for v in sys.modules.copy().values()
+            if hasattr(v, "__spec__")
+            and v.__spec__ is not None
+            and v.__spec__.origin == spec.origin
+        )
+    except StopIteration:
+        raise ModuleNotFoundError(module_key) from None
+    return module
+
+
+def scale_samples(
+    samples,
+    width,
+    height,
+    mode="bicubic",
+    sigma=None,  # noqa: ARG001
+):
+    if mode == "bislerp":
+        return bislerp(samples, width, height)
+    return torchf.interpolate(samples, size=(height, width), mode=mode)
+
+
+class Integrations:
+    def __init__(self):
+        self.initialized = False
+        self.modules = {}
+        self.init_handlers = []
+
+    def __getitem__(self, key):
+        return self.modules[key]
+
+    def __contains__(self, key):
+        return key in self.modules
+
+    def __getattr__(self, key):
+        return self.modules.get(key)
+
+    def register_init_handler(self, fun):
+        self.init_handlers.append(fun)
+
+    def initialize(self) -> None:
+        if self.initialized:
+            return
+        self.initialized = True
+
+        with contextlib.suppress(ModuleNotFoundError, NotImplementedError):
+            bleh = get_custom_node("ComfyUI-bleh")
+            bleh_version = getattr(bleh, "BLEH_VERSION", -1)
+            if bleh_version < 0:
+                raise NotImplementedError
+            self.modules["bleh"] = bleh
+
+        for init_handler in self.init_handlers:
+            init_handler()
+
+
+MODULES = Integrations()
+
+
+def init_integrations():
+    global scale_samples, UPSCALE_METHODS  # noqa: PLW0603
+    ext_bleh = MODULES.bleh
+    if ext_bleh is None:
+        return
+    bleh_latentutils = getattr(ext_bleh.py, "latent_utils", None)
     if bleh_latentutils is None:
-        raise ImportError  # noqa: TRY301
-    bleh_version = getattr(bleh, "BLEH_VERSION", -1)
-    if bleh_version < 0:
-
-        def scale_samples(*args: list, sigma=None, **kwargs: dict):  # noqa: ARG001
-            return bleh_latentutils.scale_samples(*args, **kwargs)
-
-    else:
-        scale_samples = bleh_latentutils.scale_samples
+        return
+    bleh_version = getattr(ext_bleh, "BLEH_VERSION", -1)
     UPSCALE_METHODS = bleh_latentutils.UPSCALE_METHODS
-except (ImportError, NotImplementedError):
+    if bleh_version >= 0:
+        scale_samples = bleh_latentutils.scale_samples
+        return
 
-    def scale_samples(
-        samples,
-        width,
-        height,
-        mode="bicubic",
-        sigma=None,  # noqa: ARG001
-    ):
-        if mode == "bislerp":
-            return bislerp(samples, width, height)
-        return torchf.interpolate(samples, size=(height, width), mode=mode)
+    def scale_samples_wrapped(*args: list, sigma=None, **kwargs: dict):  # noqa: ARG001
+        return bleh_latentutils.scale_samples(*args, **kwargs)
 
+    scale_samples = scale_samples_wrapped
+
+
+MODULES.register_init_handler(init_integrations)
 
 __all__ = (
     "UPSCALE_METHODS",
