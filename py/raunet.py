@@ -11,7 +11,7 @@ from comfy.ldm.modules.diffusionmodules import openaimodel
 
 from . import utils
 from .utils import (
-    MODULES,
+    IntegratedNode,
     ModelType,
     TimeMode,
     check_time,
@@ -33,7 +33,7 @@ F = torch.nn.functional
 CA_DOWNSCALE_METHODS = ()
 
 
-def init_integrations():
+def init_integrations(_integrations) -> None:
     global scale_samples, CA_DOWNSCALE_METHODS  # noqa: PLW0603
     CA_DOWNSCALE_METHODS = (
         ("avg_pool2d", "adaptive_avg_pool2d", *utils.UPSCALE_METHODS)
@@ -298,7 +298,7 @@ class State:
 
         # We only try one time.
         self.patched_freeu_advanced = True
-        fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
+        fua_nodes = getattr(utils.MODULES.freeu_advanced, "nodes", None)
         if not fua_nodes:
             return
 
@@ -316,7 +316,7 @@ class State:
             logger.info("** jankhidiffusion: Reverted openaimodel.apply_control patch")
         if not self.patched_freeu_advanced:
             return
-        fua_nodes = sys.modules.get("FreeU_Advanced.nodes")
+        fua_nodes = getattr(utils.MODULES.freeu_advanced, "nodes", None)
         if not fua_nodes:
             logger.warning(
                 "** jankhidiffusion: Unexpectedly could not revert FreeU_Advanced patches",
@@ -461,7 +461,7 @@ class HDForward:
         )
 
 
-class ApplyRAUNet:
+class ApplyRAUNet(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect.",)
     FUNCTION = "patch"
@@ -470,7 +470,6 @@ class ApplyRAUNet:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
-        MODULES.initialize()
         return {
             "required": {
                 "model": (
@@ -827,7 +826,7 @@ class ApplyRAUNet:
         return (model,)
 
 
-class ApplyRAUNetSimple:
+class ApplyRAUNetSimple(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the RAUNet effect.",)
     FUNCTION = "patch"
@@ -836,7 +835,6 @@ class ApplyRAUNetSimple:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
-        MODULES.initialize()
         return {
             "required": {
                 "model": (

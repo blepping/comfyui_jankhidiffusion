@@ -9,7 +9,7 @@ import torch
 
 from . import utils
 from .utils import (
-    MODULES,
+    IntegratedNode,
     ModelType,
     StrEnum,
     TimeMode,
@@ -33,7 +33,7 @@ SCALE_METHODS = ()
 REVERSE_SCALE_METHODS = ()
 
 
-def init_integrations():
+def init_integrations(_integrations) -> None:
     global scale_samples, SCALE_METHODS, REVERSE_SCALE_METHODS  # noqa: PLW0603
     SCALE_METHODS = ("disabled", "skip", *utils.UPSCALE_METHODS)
     REVERSE_SCALE_METHODS = utils.UPSCALE_METHODS
@@ -213,7 +213,7 @@ class State:
         return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.pretty_last_block}, last_shift={self.last_shift}, last_shifts={self.last_shifts}>"
 
 
-class ApplyMSWMSAAttention:
+class ApplyMSWMSAAttention(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "patch"
@@ -222,7 +222,6 @@ class ApplyMSWMSAAttention:
 
     @classmethod
     def INPUT_TYPES(cls):
-        MODULES.initialize()
         return {
             "required": {
                 "input_blocks": (
@@ -566,7 +565,7 @@ class ApplyMSWMSAAttention:
         return (model,)
 
 
-class ApplyMSWMSAAttentionSimple:
+class ApplyMSWMSAAttentionSimple(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "go"
@@ -575,7 +574,6 @@ class ApplyMSWMSAAttentionSimple:
 
     @classmethod
     def INPUT_TYPES(cls) -> dict:
-        MODULES.initialize()
         return {
             "required": {
                 "model_type": (
