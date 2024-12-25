@@ -2,6 +2,10 @@
 
 Note, only relatively significant changes to user-visible functionality will be included here. Most recent changes at the top.
 
+## 20241224
+
+Reworked approach to integrating with external node packs. This _shouldn't_ cause any visible changes from a user perspective but please create an issue if you notice anything weird.
+
 ## 20241014
 
 _Note_: Advanced MSW-MSA Attention node parameters changed. May break workflows.

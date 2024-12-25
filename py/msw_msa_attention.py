@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import itertools
-import logging
 import math
 from time import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import torch
 
+from . import utils
 from .utils import (
-    UPSCALE_METHODS,
+    IntegratedNode,
     ModelType,
     StrEnum,
     TimeMode,
@@ -18,6 +18,7 @@ from .utils import (
     convert_time,
     get_sigma,
     guess_model_type,
+    logger,
     parse_blocks,
     rescale_size,
     scale_samples,
@@ -28,9 +29,19 @@ F = torch.nn.functional
 if TYPE_CHECKING:
     import comfy
 
+SCALE_METHODS = ()
+REVERSE_SCALE_METHODS = ()
 
-SCALE_METHODS = ("disabled", "skip", *UPSCALE_METHODS)
-REVERSE_SCALE_METHODS = UPSCALE_METHODS
+
+def init_integrations(_integrations) -> None:
+    global scale_samples, SCALE_METHODS, REVERSE_SCALE_METHODS  # noqa: PLW0603
+    SCALE_METHODS = ("disabled", "skip", *utils.UPSCALE_METHODS)
+    REVERSE_SCALE_METHODS = utils.UPSCALE_METHODS
+    scale_samples = utils.scale_samples
+
+
+utils.MODULES.register_init_handler(init_integrations)
+
 DEFAULT_WARN_INTERVAL = 60
 
 
@@ -193,7 +204,7 @@ class State:
             or self.last_warned is None
             or now - self.last_warned >= DEFAULT_WARN_INTERVAL
         ):
-            logging.warning(
+            logger.warning(
                 f"** jankhidiffusion: MSW-MSA attention({self.pretty_last_block}): {s}",
             )
             self.last_warned = now
@@ -202,7 +213,7 @@ class State:
         return f"<MSWMSAAttentionState:last_sigma={self.last_sigma}, last_block={self.pretty_last_block}, last_shift={self.last_shift}, last_shifts={self.last_shifts}>"
 
 
-class ApplyMSWMSAAttention:
+class ApplyMSWMSAAttention(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "patch"
@@ -455,7 +466,7 @@ class ApplyMSWMSAAttention:
         cls,
         *,
         model: comfy.model_patcher.ModelPatcher,
-        yaml_parameters: None | str = None,
+        yaml_parameters: str | None = None,
         **kwargs: dict[str, Any],
     ) -> tuple[comfy.model_patcher.ModelPatcher]:
         if yaml_parameters:
@@ -477,7 +488,7 @@ class ApplyMSWMSAAttention:
         if not config.use_blocks:
             return (model,)
         if config.verbose:
-            logging.info(
+            logger.info(
                 f"** jankhidiffusion: MSW-MSA Attention: Using config: {config}",
             )
 
@@ -528,7 +539,7 @@ class ApplyMSWMSAAttention:
                     for idx, tensor in enumerate(attn_parts)
                 )
             except (RuntimeError, ValueError) as exc:
-                logging.warning(
+                logger.warning(
                     f"** jankhidiffusion: Exception applying MSW-MSA attention: Incompatible model patches or bad resolution. Try using resolutions that are multiples of 64 or set scale/reverse_scale modes to something other than disabled. Original exception: {exc}",
                 )
                 state.window_args = None
@@ -554,7 +565,7 @@ class ApplyMSWMSAAttention:
         return (model,)
 
 
-class ApplyMSWMSAAttentionSimple:
+class ApplyMSWMSAAttentionSimple(metaclass=IntegratedNode):
     RETURN_TYPES = ("MODEL",)
     OUTPUT_TOOLTIPS = ("Model patched with the MSW-MSA attention effect.",)
     FUNCTION = "go"
@@ -597,7 +608,7 @@ class ApplyMSWMSAAttentionSimple:
         if preset is None:
             errstr = f"Unknown model type {model_type!s}"
             raise ValueError(errstr)
-        logging.info(
+        logger.info(
             f"** ApplyMSWMSAAttentionSimple: Using preset {model_type!s}: in/mid/out blocks [{preset.pretty_blocks}], start/end percent {preset.start_time:.2}/{preset.end_time:.2}",
         )
         return ApplyMSWMSAAttention.patch(model=model, **preset.as_dict)
