@@ -3,14 +3,18 @@ on:
   workflow_dispatch:
   release: { types: ["published"] }
 
+permissions:
+  issues: write
+
 jobs:
   publish-node:
     name: Publish Custom Node to registry
     runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'blepping' }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
       - name: Publish Custom Node
-        uses: Comfy-Org/publish-node-action@main
+        uses: Comfy-Org/publish-node-action@v1
         with:
           personal_access_token: ${{ secrets.COMFYORG_REGISTRY_API_KEY }}
