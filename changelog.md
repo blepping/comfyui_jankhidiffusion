@@ -2,6 +2,13 @@
 
 Note, only relatively significant changes to user-visible functionality will be included here. Most recent changes at the top.
 
+
+## 20250506
+
+ComfyUI in its infinite wisdom decided to make it so you can no longer have parameters that default to inputs but can be converted to widgets and widgets take up the full space even if you're using an input now. Because of this, the YAML parameters in the node will take up a lot more space and can't be hidden. I'd make it so the parameter was just always an input but then it would be impossible to acces the parameters in any workflows that had previously converted the input to a widget.
+
+* Work around breakage caused by recent ComfyUI frontend versions.
+
 ## 20241224
 
 Reworked approach to integrating with external node packs. This _shouldn't_ cause any visible changes from a user perspective but please create an issue if you notice anything weird.

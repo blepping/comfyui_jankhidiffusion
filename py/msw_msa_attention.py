@@ -285,10 +285,9 @@ class ApplyMSWMSAAttention(metaclass=IntegratedNode):
                 "yaml_parameters": (
                     "STRING",
                     {
-                        "tooltip": "Allows specifying custom parameters via YAML. You can also override any of the normal parameters by key. This input can be converted into a multiline text widget. See main README for possible options. Note: When specifying paramaters this way, there is very little error checking.",
+                        "tooltip": "Allows specifying custom parameters via YAML. You can also override any of the normal parameters by key. See main README for possible options. Note: When specifying paramaters this way, there is very little error checking.",
                         "dynamicPrompts": False,
                         "multiline": True,
-                        "defaultInput": True,
                     },
                 ),
             },
